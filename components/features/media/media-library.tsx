@@ -236,6 +236,36 @@ function Lightbox({
   onClose: () => void;
 }) {
   const [loaded, setLoaded] = useState(false);
+  const [analysis, setAnalysis] = useState<
+    import("@/lib/types").MediaAnalysis | null
+  >(asset.analysis ?? null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+
+  async function runAnalysis() {
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    try {
+      const res = await fetch(`/api/media/${asset.id}/analyze`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      const body = (await res.json()) as {
+        analysis: import("@/lib/types").MediaAnalysis;
+        demo?: boolean;
+      };
+      setAnalysis(body.analysis);
+    } catch (err) {
+      setAnalyzeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAnalyzing(false);
+    }
+  }
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm"
@@ -306,15 +336,54 @@ function Lightbox({
               </div>
             </div>
 
-            <div className="rounded-lg border border-dashed border-border-strong bg-bg-base p-4">
+            <div className="space-y-3 rounded-lg border border-border-subtle bg-bg-base p-4">
               <div className="flex items-center gap-2 text-text-primary">
                 <Sparkles className="h-4 w-4 text-accent" />
                 <span className="text-xs font-semibold">AI-analyysi</span>
               </div>
-              <p className="mt-2 text-xs leading-relaxed text-text-secondary">
-                OpenAI Vision analysoi sisällön, työvaiheen, palvelun ja
-                turvallisuusriskin sekä ehdottaa otsikon ja tagit. Tulossa v1.
-              </p>
+              {analysis ? (
+                <div className="space-y-2 text-xs">
+                  <AnalysisRow label="Kuvaus">{analysis.sceneDescription}</AnalysisRow>
+                  <AnalysisRow label="Työvaihe">{analysis.workPhase}</AnalysisRow>
+                  <AnalysisRow label="Palvelu">{analysis.relatedService}</AnalysisRow>
+                  <AnalysisRow label="Turvallisuus">{analysis.safetyRisk}</AnalysisRow>
+                  <AnalysisRow label="Ehdotettu otsikko">
+                    {analysis.suggestedTitle}
+                  </AnalysisRow>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-text-tertiary">
+                      Ehdotetut tagit
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {analysis.suggestedTags.map((t) => (
+                        <Badge key={t}>#{t}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs leading-relaxed text-text-secondary">
+                  Claude Vision analysoi sisällön, työvaiheen, palvelun ja
+                  turvallisuusriskin sekä ehdottaa otsikon ja tagit.
+                </p>
+              )}
+              {analyzeError ? (
+                <p className="text-xs text-red-400">Virhe: {analyzeError}</p>
+              ) : null}
+              <Button
+                className="w-full gap-2"
+                size="sm"
+                variant={analysis ? "secondary" : "primary"}
+                disabled={analyzing}
+                onClick={runAnalysis}
+              >
+                <Sparkles className="h-4 w-4" />
+                {analyzing
+                  ? "Analysoidaan…"
+                  : analysis
+                    ? "Analysoi uudelleen"
+                    : "Analysoi"}
+              </Button>
             </div>
 
             <Button className="w-full gap-2" disabled>
@@ -324,6 +393,23 @@ function Lightbox({
           </div>
         </aside>
       </div>
+    </div>
+  );
+}
+
+function AnalysisRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-text-tertiary">
+        {label}
+      </div>
+      <div className="mt-0.5 text-text-primary">{children}</div>
     </div>
   );
 }

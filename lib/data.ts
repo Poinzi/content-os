@@ -264,3 +264,25 @@ export async function getAnalytics(_orgId: string): Promise<AnalyticsSummary> {
   // TODO v3: laske oikeasta datasta (analytics_events tai integraatiot)
   return MOCK_ANALYTICS;
 }
+
+/* ========== WRITERS ========== */
+
+/**
+ * Tallenna Vision-analyysi mediaan. Mock-tilassa tai ilman DATABASE_URL:ää
+ * ei kirjoiteta mihinkään — kutsuja käsittelee palautetun analyysin
+ * pelkästään näkymässä (demo-käyttö).
+ */
+export async function setMediaAnalysis(
+  orgId: string,
+  assetId: string,
+  analysis: import("@/lib/types").MediaAnalysis,
+): Promise<void> {
+  if (useMock()) return;
+  await ensureReady();
+  await query(
+    `UPDATE media_assets
+     SET analysis = $1::jsonb, analysis_status = 'done'
+     WHERE id = $2::uuid AND org_id = $3::uuid`,
+    [JSON.stringify(analysis), assetId, orgId],
+  );
+}
