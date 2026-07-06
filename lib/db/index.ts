@@ -1,4 +1,4 @@
-import { Pool } from "pg";
+import { Pool, type QueryResultRow } from "pg";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -16,10 +16,13 @@ export const pool = isEnabled
     })
   : null;
 
-export async function query<T = unknown>(text: string, params: unknown[] = []) {
+export async function query<T extends QueryResultRow = QueryResultRow>(
+  text: string,
+  params: unknown[] = [],
+) {
   if (!pool) throw new Error("DATABASE_URL puuttuu — data-kerros käyttää mockia");
-  const res = await pool.query(text, params);
-  return { rows: res.rows as T[], rowCount: res.rowCount ?? 0 };
+  const res = await pool.query<T>(text, params);
+  return { rows: res.rows, rowCount: res.rowCount ?? 0 };
 }
 
 export async function initSchema(): Promise<{ ok: boolean; reason?: string }> {
@@ -32,4 +35,28 @@ export async function initSchema(): Promise<{ ok: boolean; reason?: string }> {
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
+}
+
+/**
+ * Lazy-init guard: initSchema + seedFromMock ajetaan kerran per palvelinprosessi.
+ * Ensimmäinen kutsu käynnistää, seuraavat odottavat samaa promisea. Jos operaatio
+ * epäonnistuu, promise nollataan ja uusi yritys sallitaan.
+ *
+ * Ei tee mitään jos DATABASE_URL puuttuu — sovellus jatkaa mock-tilassa.
+ */
+let readyPromise: Promise<void> | null = null;
+export function ensureReady(): Promise<void> {
+  if (!isEnabled) return Promise.resolve();
+  if (!readyPromise) {
+    readyPromise = (async () => {
+      const r = await initSchema();
+      if (!r.ok) throw new Error(`initSchema failed: ${r.reason}`);
+      const { seedFromMock } = await import("./seed");
+      await seedFromMock();
+    })().catch((e) => {
+      readyPromise = null;
+      throw e;
+    });
+  }
+  return readyPromise;
 }
