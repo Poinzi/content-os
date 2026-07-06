@@ -19,6 +19,11 @@ export const DEMO_USER_ID = "00000000-0000-0000-0000-000000000001";
  * Idempotentti seed: jos organisaatioita on jo, palataan heti. Muuten INSERT
  * kaikki mock-datasta transaktiossa. Kaikki INSERTit ON CONFLICT DO NOTHING
  * jotta osittain seedatut kannat saadaan täydennettyä ilman virhettä.
+ *
+ * Kaikki mock-id:t ja viitteet ajetaan ensureUuid()-apurin läpi, jotta uuid-
+ * sarakkeet saavat validia dataa. Sama syöte tuottaa aina saman uuid:n, joten
+ * viite-eheys säilyy (esim. folders.id = ensureUuid("f_kentta") ja
+ * media_assets.folder_id = ensureUuid("f_kentta") täsmäävät).
  */
 export async function seedFromMock(): Promise<void> {
   if (!pool) return;
@@ -35,35 +40,37 @@ export async function seedFromMock(): Promise<void> {
     // organizations + members
     for (const m of MOCK_MEMBERSHIPS) {
       const org = m.organization;
+      const orgUuid = ensureUuid(org.id);
       await client.query(
         `INSERT INTO organizations (id, name, slug, logo_url)
-         VALUES ($1, $2, $3, $4)
+         VALUES ($1::uuid, $2, $3, $4)
          ON CONFLICT (id) DO NOTHING`,
-        [org.id, org.name, org.slug, org.logoUrl ?? null],
+        [orgUuid, org.name, org.slug, org.logoUrl ?? null],
       );
       await client.query(
         `INSERT INTO organization_members (org_id, user_id, role)
-         VALUES ($1, $2, $3)
+         VALUES ($1::uuid, $2, $3)
          ON CONFLICT (org_id, user_id) DO NOTHING`,
-        [org.id, DEMO_USER_ID, m.role],
+        [orgUuid, DEMO_USER_ID, m.role],
       );
     }
 
     // Loput seedataan ensimmäiseen orgin (Savuks). Muut demo-orgit jäävät tyhjiksi.
-    const savuksId = MOCK_MEMBERSHIPS[0]?.organization.id;
-    if (!savuksId) {
+    const savuksRawId = MOCK_MEMBERSHIPS[0]?.organization.id;
+    if (!savuksRawId) {
       await client.query("COMMIT");
       return;
     }
+    const savuksUuid = ensureUuid(savuksRawId);
 
     // brand_brains
     await client.query(
       `INSERT INTO brand_brains (
          org_id, writing_style, tone_of_voice, values, services, target_audiences, ctas
-       ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb)
+       ) VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb)
        ON CONFLICT (org_id) DO NOTHING`,
       [
-        savuksId,
+        savuksUuid,
         MOCK_BRAND_BRAIN.writingStyle,
         MOCK_BRAND_BRAIN.toneOfVoice,
         MOCK_BRAND_BRAIN.values,
@@ -77,9 +84,9 @@ export async function seedFromMock(): Promise<void> {
     for (const s of MOCK_BRAND_BRAIN.allowedSeries) {
       await client.query(
         `INSERT INTO content_series (id, org_id, name, description, is_active)
-         VALUES ($1::uuid, $2, $3, $4, $5)
+         VALUES ($1::uuid, $2::uuid, $3, $4, $5)
          ON CONFLICT (id) DO NOTHING`,
-        [ensureUuid(s.id), savuksId, s.name, s.description ?? null, s.isActive],
+        [ensureUuid(s.id), savuksUuid, s.name, s.description ?? null, s.isActive],
       );
     }
 
@@ -87,9 +94,14 @@ export async function seedFromMock(): Promise<void> {
     for (const f of MOCK_FOLDERS) {
       await client.query(
         `INSERT INTO folders (id, org_id, name, parent_id)
-         VALUES ($1::uuid, $2, $3, $4)
+         VALUES ($1::uuid, $2::uuid, $3, $4)
          ON CONFLICT (id) DO NOTHING`,
-        [ensureUuid(f.id), savuksId, f.name, f.parentId ?? null],
+        [
+          ensureUuid(f.id),
+          savuksUuid,
+          f.name,
+          f.parentId ? ensureUuid(f.parentId) : null,
+        ],
       );
     }
 
@@ -100,11 +112,11 @@ export async function seedFromMock(): Promise<void> {
            id, org_id, kind, title, tags, folder_id, thumbnail_url,
            duration_seconds, analysis_status, analysis, created_at
          ) VALUES (
-           $1::uuid, $2, $3, $4, $5::jsonb, $6::uuid, $7, $8, $9, $10::jsonb, $11
+           $1::uuid, $2::uuid, $3, $4, $5::jsonb, $6::uuid, $7, $8, $9, $10::jsonb, $11
          ) ON CONFLICT (id) DO NOTHING`,
         [
           ensureUuid(a.id),
-          savuksId,
+          savuksUuid,
           a.kind,
           a.title,
           JSON.stringify(a.tags),
@@ -124,11 +136,11 @@ export async function seedFromMock(): Promise<void> {
         `INSERT INTO content_items (
            id, org_id, title, status, media_asset_id, series_name, channels, created_at
          ) VALUES (
-           $1::uuid, $2, $3, $4, $5::uuid, $6, $7::jsonb, $8
+           $1::uuid, $2::uuid, $3, $4, $5::uuid, $6, $7::jsonb, $8
          ) ON CONFLICT (id) DO NOTHING`,
         [
           ensureUuid(c.id),
-          savuksId,
+          savuksUuid,
           c.title,
           c.status,
           c.mediaAssetId ? ensureUuid(c.mediaAssetId) : null,
@@ -145,11 +157,11 @@ export async function seedFromMock(): Promise<void> {
         `INSERT INTO calendar_events (
            id, org_id, title, channel, status, scheduled_at, thumbnail_url
          ) VALUES (
-           $1::uuid, $2, $3, $4, $5, $6, $7
+           $1::uuid, $2::uuid, $3, $4, $5, $6, $7
          ) ON CONFLICT (id) DO NOTHING`,
         [
           ensureUuid(e.id),
-          savuksId,
+          savuksUuid,
           e.title,
           e.channel,
           e.status,
@@ -169,16 +181,22 @@ export async function seedFromMock(): Promise<void> {
 }
 
 /**
- * Mock-data käyttää lyhyitä id-merkkijonoja kuten "m1", "s1", "f_kentta".
- * Postgres-taulut vaativat UUID:t (gen_random_uuid() defaultit). Muunnetaan
- * lyhyet id:t deterministiseksi UUIDv5-tyyliseksi merkkijonoksi jotta
- * viittaukset (folder_id, media_asset_id) säilyvät ehjinä.
+ * Mock-data käyttää lyhyitä id-merkkijonoja kuten "org_savuks", "m1", "s1",
+ * "f_kentta". Postgres-taulut vaativat UUID:t (gen_random_uuid() defaultit).
+ * Muunnetaan lyhyet id:t deterministiseksi UUIDv5-tyyliseksi merkkijonoksi
+ * jotta viittaukset (folder_id, media_asset_id, org_id) säilyvät ehjinä.
+ *
+ * Sama syöte tuottaa aina saman uuid:n → jos folder.id = ensureUuid("f_kentta")
+ * ja media.folder_id = ensureUuid("f_kentta"), ne täsmäävät.
+ *
+ * Jos syöte on jo validi uuid, palautetaan se sellaisenaan (esim. DEMO_USER_ID
+ * ei muutu).
  */
 function ensureUuid(id: string): string {
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
     return id;
   }
-  // Deterministinen: hashaa id → 32 hex-merkkiä → UUID-formaatti
+  // Deterministinen: hashaa id → 32 hex-merkkiä → UUID-formaatti (8-4-4-4-12)
   let h1 = 0xdeadbeef;
   let h2 = 0x41c6ce57;
   for (let i = 0; i < id.length; i++) {
