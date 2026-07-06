@@ -155,7 +155,16 @@ export async function getMemberships(userId: string = DEMO_USER_ID): Promise<Mem
      FROM organizations o
      JOIN organization_members m ON m.org_id = o.id
      WHERE m.user_id = $1
-     ORDER BY o.name`,
+     ORDER BY
+       CASE m.role
+         WHEN 'owner'    THEN 1
+         WHEN 'admin'    THEN 2
+         WHEN 'editor'   THEN 3
+         WHEN 'reviewer' THEN 4
+         WHEN 'viewer'   THEN 5
+         ELSE 6
+       END,
+       o.name`,
     [userId],
   );
   if (rows.length === 0) return MOCK_MEMBERSHIPS;
