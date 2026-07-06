@@ -1,14 +1,10 @@
+export const dynamic = "force-dynamic";
+
 import { redirect } from "next/navigation";
 import { getTenantContext } from "@/lib/tenant";
 import { Sidebar } from "@/components/app-shell/sidebar";
 import { Topbar } from "@/components/app-shell/topbar";
 import { CommandPalette } from "@/components/app-shell/command-palette";
-
-// Pakota (app)-alueen sivut dynaamiseen renderöintiin jotta Next.js ei yritä
-// staattisesti prerenderoida niitä build-aikana. Data-getterit ottavat
-// tietokantayhteyden (kun DATABASE_URL on asetettu), jota ei voida ratkaista
-// Railwayn build-vaiheessa (postgres.railway.internal ei ole saavutettavissa).
-export const dynamic = "force-dynamic";
 
 export default async function AppLayout({
   children,
