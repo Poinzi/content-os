@@ -19,7 +19,7 @@ export function BrandBrainForm({ initial }: Props) {
     setData((d) => ({ ...d, [key]: value }));
     setSaved(false);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setSaved(true), 400);
+    timer.current = setTimeout(() => setSaved(true), 800);
   };
 
   return (

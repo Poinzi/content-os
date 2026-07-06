@@ -108,7 +108,7 @@ export default async function DashboardPage() {
               Tulevat julkaisut
             </CardTitle>
             <Link
-              href="/kalenteri"
+              href="/calendar"
               className="text-xs text-text-tertiary hover:text-text-secondary"
             >
               Näytä kaikki

@@ -235,6 +235,7 @@ function Lightbox({
   asset: MediaAsset;
   onClose: () => void;
 }) {
+  const [loaded, setLoaded] = useState(false);
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm"
@@ -245,12 +246,19 @@ function Lightbox({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="relative hidden flex-1 bg-black sm:block">
+          {!loaded && (
+            <div className="absolute inset-0 animate-pulse bg-bg-surface-2" />
+          )}
           <Image
             src={asset.thumbnailUrl}
             alt={asset.title}
             fill
             sizes="60vw"
-            className="object-contain"
+            className={cn(
+              "object-contain transition-opacity duration-300",
+              loaded ? "opacity-100" : "opacity-0",
+            )}
+            onLoad={() => setLoaded(true)}
             unoptimized
           />
         </div>
