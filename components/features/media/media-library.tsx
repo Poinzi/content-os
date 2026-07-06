@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import {
   Search,
   Upload,
@@ -10,6 +11,7 @@ import {
   Play,
   X,
   Sparkles,
+  ArrowRight,
 } from "lucide-react";
 import type { Folder, MediaAsset } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
@@ -242,6 +244,14 @@ function Lightbox({
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
 
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+  const [generated, setGenerated] = useState<{
+    variantsCount: number;
+    contentItemId: string;
+    demo?: boolean;
+  } | null>(null);
+
   async function runAnalysis() {
     setAnalyzing(true);
     setAnalyzeError(null);
@@ -264,6 +274,37 @@ function Lightbox({
       setAnalyzeError(err instanceof Error ? err.message : String(err));
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  async function runGenerate() {
+    setGenerating(true);
+    setGenError(null);
+    setGenerated(null);
+    try {
+      const res = await fetch(`/api/media/${asset.id}/generate`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      const body = (await res.json()) as {
+        generated: import("@/lib/ai/generate-content").GeneratedContent;
+        contentItemId: string;
+        demo?: boolean;
+      };
+      setGenerated({
+        variantsCount: body.generated.variants.length,
+        contentItemId: body.contentItemId,
+        demo: body.demo,
+      });
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGenerating(false);
     }
   }
   return (
@@ -386,10 +427,38 @@ function Lightbox({
               </Button>
             </div>
 
-            <Button className="w-full gap-2" disabled>
-              <Sparkles className="h-4 w-4" />
-              Luo sisältö (v1)
-            </Button>
+            <div className="space-y-2">
+              <Button
+                className="w-full gap-2"
+                disabled={generating || !analysis}
+                onClick={runGenerate}
+              >
+                <Sparkles className="h-4 w-4" />
+                {generating ? "Luodaan sisältöä…" : "Luo sisältö"}
+              </Button>
+              {!analysis ? (
+                <p className="text-[11px] text-text-tertiary">
+                  Analysoi media ensin — sisällöntuotanto käyttää Vision-analyysiä.
+                </p>
+              ) : null}
+              {genError ? (
+                <p className="text-xs text-red-400">Virhe: {genError}</p>
+              ) : null}
+              {generated ? (
+                <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
+                  <div className="font-semibold">
+                    ✓ Luotu {generated.variantsCount} kanavavarianttia
+                    {generated.demo ? " (demo)" : ""}
+                  </div>
+                  <Link
+                    href="/generator"
+                    className="mt-2 inline-flex items-center gap-1 text-emerald-100 hover:underline"
+                  >
+                    Avaa Sisältöjonossa <ArrowRight className="h-3 w-3" />
+                  </Link>
+                </div>
+              ) : null}
+            </div>
           </div>
         </aside>
       </div>

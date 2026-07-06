@@ -13,7 +13,7 @@ import type {
   Organization,
   OrgRole,
 } from "@/lib/types";
-import { isEnabled as dbEnabled, query, ensureReady } from "@/lib/db";
+import { isEnabled as dbEnabled, query, ensureReady, pool } from "@/lib/db";
 import { DEMO_USER_ID } from "@/lib/db/seed";
 import {
   MOCK_ANALYTICS,
@@ -285,4 +285,70 @@ export async function setMediaAnalysis(
      WHERE id = $2::uuid AND org_id = $3::uuid`,
     [JSON.stringify(analysis), assetId, orgId],
   );
+}
+
+/**
+ * Tallenna AI-tuotettu sisältö (content_items + content_variants). Nykyisessä
+ * skeemassa content_variants sisältää vain (id, content_item_id, channel, body,
+ * status), joten hashtagit ja CTA yhdistetään bodyyn tekstinä (näkyvät suoraan
+ * julkaisussa). SEO-paketti palautetaan API-vastauksessa mutta ei tallenneta
+ * (seo_bundles-taulu ei ole skeemassa; ei lisätä migraatioita).
+ *
+ * ai_model-kenttä on ohjeen mukainen mutta ei mene kantaan (content_variants
+ * ei sisällä tätä saraketta).
+ */
+export async function createGeneratedContent(
+  orgId: string,
+  input: {
+    mediaAssetId: string;
+    seriesName?: string | null;
+    generated: import("@/lib/ai/generate-content").GeneratedContent;
+    aiModel: string;
+  },
+): Promise<{ contentItemId: string }> {
+  if (useMock()) return { contentItemId: "demo-content" };
+  await ensureReady();
+  if (!pool) return { contentItemId: "demo-content" };
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const channels = input.generated.variants.map((v) => v.channel);
+    const insertItem = await client.query<{ id: string }>(
+      `INSERT INTO content_items (org_id, title, status, media_asset_id, series_name, channels)
+       VALUES ($1::uuid, $2, 'draft', $3::uuid, $4, $5::jsonb)
+       RETURNING id`,
+      [
+        orgId,
+        input.generated.itemTitle,
+        input.mediaAssetId,
+        input.seriesName ?? null,
+        JSON.stringify(channels),
+      ],
+    );
+    const contentItemId = insertItem.rows[0]?.id;
+    if (!contentItemId) throw new Error("content_items INSERT ei palauttanut id:tä");
+
+    for (const variant of input.generated.variants) {
+      const hashLine =
+        variant.hashtags.length > 0
+          ? "\n\n" + variant.hashtags.map((h) => `#${h}`).join(" ")
+          : "";
+      const ctaLine = variant.cta ? "\n\n" + variant.cta : "";
+      const body = variant.body + ctaLine + hashLine;
+      await client.query(
+        `INSERT INTO content_variants (content_item_id, channel, body, status)
+         VALUES ($1::uuid, $2, $3, 'draft')`,
+        [contentItemId, variant.channel, body],
+      );
+    }
+
+    await client.query("COMMIT");
+    return { contentItemId };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
