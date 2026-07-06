@@ -4,8 +4,10 @@ import type {
   CalendarEvent,
   Channel,
   ContentItem,
+  ContentItemDetail,
   ContentSeries,
   ContentStatus,
+  ContentVariant,
   Folder,
   MediaAnalysis,
   MediaAsset,
@@ -351,4 +353,206 @@ export async function createGeneratedContent(
   } finally {
     client.release();
   }
+}
+
+/* ========== CONTENT VARIANTS: parse/combine ========== */
+
+/**
+ * Nykyinen skeema tallentaa vain body-sarakkeen. Vaihe 9 writer yhdisti
+ * body + cta + hashtags samaan tekstiin. Parsitaan takaisin näkymässä
+ * editoitaviksi kentiksi: viimeisen "hashtag-rivin" ( "#tag #tag" ) ja
+ * sitä edeltävän lyhyen CTA-rivin ekstraaminen, muu on body.
+ */
+function parseVariantBody(fullBody: string): {
+  body: string;
+  cta: string;
+  hashtags: string[];
+} {
+  const parts = fullBody.split(/\n{2,}/);
+  let hashtags: string[] = [];
+  let cta = "";
+
+  // Trailing hashtag-linja
+  while (parts.length > 0) {
+    const last = (parts[parts.length - 1] || "").trim();
+    if (!last) {
+      parts.pop();
+      continue;
+    }
+    if (/^(?:#\S+\s*)+$/.test(last)) {
+      hashtags = (last.match(/#(\S+)/g) ?? []).map((t) => t.slice(1));
+      parts.pop();
+      continue;
+    }
+    break;
+  }
+
+  // Toissijainen: lyhyt (< 200 merkkiä) rivi = CTA jos > 1 parts
+  if (parts.length > 1) {
+    const potential = (parts[parts.length - 1] || "").trim();
+    if (potential.length > 0 && potential.length < 200) {
+      cta = potential;
+      parts.pop();
+    }
+  }
+
+  return {
+    body: parts.join("\n\n").trim(),
+    cta,
+    hashtags,
+  };
+}
+
+/**
+ * Yhdistä editoinnin jälkeen body + cta + hashtags takaisin
+ * tallennettavaan tekstiin. Sama muoto kuin Vaihe 9 writerissa.
+ */
+function combineVariantBody(
+  body: string,
+  cta: string,
+  hashtags: string[],
+): string {
+  const parts: string[] = [];
+  if (body.trim()) parts.push(body.trim());
+  if (cta.trim()) parts.push(cta.trim());
+  if (hashtags.length > 0) {
+    parts.push(hashtags.map((h) => `#${h.replace(/^#+/, "")}`).join(" "));
+  }
+  return parts.join("\n\n");
+}
+
+/* ========== CONTENT ITEM DETAIL ========== */
+
+interface ContentVariantRow {
+  id: string;
+  channel: Channel;
+  body: string;
+  status: ContentStatus;
+}
+
+function mapContentVariant(r: ContentVariantRow): ContentVariant {
+  const parsed = parseVariantBody(r.body);
+  return {
+    id: r.id,
+    channel: r.channel,
+    body: parsed.body,
+    hashtags: parsed.hashtags,
+    cta: parsed.cta,
+    status: r.status,
+  };
+}
+
+function demoContentDetail(itemId: string): ContentItemDetail | null {
+  const item = MOCK_CONTENT_QUEUE.find((c) => c.id === itemId) ?? MOCK_CONTENT_QUEUE[0];
+  if (!item) return null;
+  const variants: ContentVariant[] = item.channels.map((ch, i) => ({
+    id: `demo-var-${i}`,
+    channel: ch,
+    body: `Demo-teksti ${ch}-kanavalle mediasta ${item.title}. Lisää DATABASE_URL nähdäksesi kannassa olevat luonnokset.`,
+    hashtags: ["paloturvallisuus", "savuks", "demo"],
+    cta: "Ota yhteyttä",
+    status: "draft",
+  }));
+  return { ...item, variants };
+}
+
+export async function getContentItem(
+  orgId: string,
+  itemId: string,
+): Promise<ContentItemDetail | null> {
+  if (useMock()) return demoContentDetail(itemId);
+  await ensureReady();
+  const itemRes = await query<ContentItemRow>(
+    `SELECT id, title, status, media_asset_id, series_name, channels, created_at
+     FROM content_items
+     WHERE id = $1::uuid AND org_id = $2::uuid
+     LIMIT 1`,
+    [itemId, orgId],
+  );
+  if (itemRes.rows.length === 0) return null;
+  const item = mapContentItem(itemRes.rows[0]);
+  const variantsRes = await query<ContentVariantRow>(
+    `SELECT v.id, v.channel, v.body, v.status
+     FROM content_variants v
+     JOIN content_items i ON i.id = v.content_item_id
+     WHERE v.content_item_id = $1::uuid AND i.org_id = $2::uuid
+     ORDER BY v.channel`,
+    [itemId, orgId],
+  );
+  return { ...item, variants: variantsRes.rows.map(mapContentVariant) };
+}
+
+/* ========== CONTENT WRITERS ========== */
+
+export async function updateContentVariant(
+  orgId: string,
+  variantId: string,
+  patch: Partial<Pick<ContentVariant, "body" | "hashtags" | "cta" | "status">>,
+): Promise<void> {
+  if (useMock()) return;
+  await ensureReady();
+
+  // Yhdistetään body/hashtags/cta yhdeksi body-kentäksi jos jokin niistä
+  // on annettu (schema säilyy: vain body-sarake tallennukselle).
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  let pIndex = 1;
+
+  if (
+    patch.body !== undefined ||
+    patch.hashtags !== undefined ||
+    patch.cta !== undefined
+  ) {
+    // Tarvitaan nykyiset arvot pohjaksi jos vain osa annetaan
+    const cur = await query<ContentVariantRow>(
+      `SELECT v.id, v.channel, v.body, v.status
+       FROM content_variants v
+       JOIN content_items i ON i.id = v.content_item_id
+       WHERE v.id = $1::uuid AND i.org_id = $2::uuid
+       LIMIT 1`,
+      [variantId, orgId],
+    );
+    if (cur.rows.length === 0) return;
+    const parsed = parseVariantBody(cur.rows[0].body);
+    const nextBody = combineVariantBody(
+      patch.body ?? parsed.body,
+      patch.cta ?? parsed.cta,
+      patch.hashtags ?? parsed.hashtags,
+    );
+    sets.push(`body = $${pIndex++}`);
+    params.push(nextBody);
+  }
+
+  if (patch.status !== undefined) {
+    sets.push(`status = $${pIndex++}`);
+    params.push(patch.status);
+  }
+
+  if (sets.length === 0) return;
+
+  params.push(variantId, orgId);
+  await query(
+    `UPDATE content_variants
+     SET ${sets.join(", ")}
+     WHERE id = $${pIndex}::uuid
+       AND content_item_id IN (
+         SELECT id FROM content_items WHERE org_id = $${pIndex + 1}::uuid
+       )`,
+    params,
+  );
+}
+
+export async function updateContentItemStatus(
+  orgId: string,
+  itemId: string,
+  status: ContentStatus,
+): Promise<void> {
+  if (useMock()) return;
+  await ensureReady();
+  await query(
+    `UPDATE content_items
+     SET status = $1
+     WHERE id = $2::uuid AND org_id = $3::uuid`,
+    [status, itemId, orgId],
+  );
 }

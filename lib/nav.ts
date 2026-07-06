@@ -6,6 +6,7 @@ import {
   BarChart3,
   Brain,
   Settings,
+  ListChecks,
   type LucideIcon,
 } from "lucide-react";
 
@@ -19,6 +20,7 @@ export type NavItem = {
 export const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Media", href: "/media", icon: ImageIcon },
+  { label: "Sisältöjono", href: "/content", icon: ListChecks },
   { label: "Generator", href: "/generator", icon: Sparkles, soon: "v1" },
   { label: "Kalenteri", href: "/calendar", icon: Calendar, soon: "v2" },
   { label: "Analytics", href: "/analytics", icon: BarChart3, soon: "v3" },

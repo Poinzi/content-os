@@ -71,6 +71,8 @@ export interface ContentVariant {
   id: string;
   channel: Channel;
   body: string;
+  hashtags: string[];
+  cta: string;
   status: ContentStatus;
 }
 
@@ -82,6 +84,10 @@ export interface ContentItem {
   seriesName?: string | null;
   channels: Channel[];
   createdAt: string;
+}
+
+export interface ContentItemDetail extends ContentItem {
+  variants: ContentVariant[];
 }
 
 export interface CalendarEvent {

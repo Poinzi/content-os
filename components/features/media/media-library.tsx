@@ -451,7 +451,7 @@ function Lightbox({
                     {generated.demo ? " (demo)" : ""}
                   </div>
                   <Link
-                    href="/generator"
+                    href="/content"
                     className="mt-2 inline-flex items-center gap-1 text-emerald-100 hover:underline"
                   >
                     Avaa Sisältöjonossa <ArrowRight className="h-3 w-3" />

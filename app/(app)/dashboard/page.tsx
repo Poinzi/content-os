@@ -165,7 +165,7 @@ export default async function DashboardPage() {
           <CardHeader>
             <CardTitle>Sisältöjono</CardTitle>
             <Link
-              href="/generator"
+              href="/content"
               className="text-xs text-text-tertiary hover:text-text-secondary"
             >
               Näytä kaikki
