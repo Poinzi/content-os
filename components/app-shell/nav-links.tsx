@@ -15,7 +15,6 @@ export function NavLinks() {
         const active =
           pathname === item.href ||
           (item.href !== "/dashboard" && pathname.startsWith(item.href));
-        const disabled = !!item.soon;
         const content = (
           <>
             <Icon className="h-4 w-4 shrink-0" />
@@ -25,19 +24,6 @@ export function NavLinks() {
         );
         const base =
           "group flex items-center gap-3 rounded-md px-3 py-2 transition-colors";
-        if (disabled) {
-          return (
-            <div
-              key={item.href}
-              className={cn(
-                base,
-                "cursor-not-allowed text-text-tertiary opacity-70",
-              )}
-            >
-              {content}
-            </div>
-          );
-        }
         return (
           <Link
             key={item.href}
