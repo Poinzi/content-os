@@ -47,6 +47,13 @@ export async function POST(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[api/media/analyze] Virhe:", message);
+    // Kuvan lataus epäonnistui palvelimella (fetchImageAsBase64) — 502 selkeällä viestillä
+    if (message.startsWith("Kuvan lataus") || message.startsWith("Kuva on liian suuri")) {
+      return NextResponse.json(
+        { error: "Kuvan lataus analyysiä varten epäonnistui", detail: message },
+        { status: 502 },
+      );
+    }
     return NextResponse.json(
       { error: "Analyysi epäonnistui", detail: message },
       { status: 500 },

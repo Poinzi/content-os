@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { BrandBrain, MediaAnalysis, MediaAsset } from "@/lib/types";
 import { anthropic, VISION_MODEL } from "./anthropic";
+import { fetchImageAsBase64 } from "./image";
 
 const RECORD_ANALYSIS_TOOL: Anthropic.Tool = {
   name: "record_analysis",
@@ -86,6 +87,10 @@ export async function analyzeMedia(
       ? `Videon esikatselukuva: "${asset.title}". Analysoi kuvaan perustuen, mainitse että kyseessä on video.`
       : `Kuva: "${asset.title}". Analysoi markkinointisisältöä varten.`;
 
+  // Hae kuva palvelimella ja lähetä se base64-lähteenä — Anthropicin ei tarvitse
+  // itse ladata ulkoisesta URL:sta (poistaa Unsplash rate-limit / hotlink 400:t).
+  const img = await fetchImageAsBase64(asset.thumbnailUrl);
+
   const response = await anthropic.messages.create({
     model: VISION_MODEL,
     max_tokens: 1024,
@@ -99,8 +104,9 @@ export async function analyzeMedia(
           {
             type: "image",
             source: {
-              type: "url",
-              url: asset.thumbnailUrl,
+              type: "base64",
+              media_type: img.mediaType,
+              data: img.data,
             },
           },
           { type: "text", text: userText },
