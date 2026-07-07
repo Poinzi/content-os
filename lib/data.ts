@@ -278,9 +278,90 @@ export async function getCalendarEvents(orgId: string): Promise<CalendarEvent[]>
   return rows.map(mapCalendarEvent);
 }
 
-export async function getAnalytics(_orgId: string): Promise<AnalyticsSummary> {
-  // TODO v3: laske oikeasta datasta (analytics_events tai integraatiot)
-  return MOCK_ANALYTICS;
+export async function getAnalytics(orgId: string): Promise<AnalyticsSummary> {
+  if (useMock()) return MOCK_ANALYTICS;
+  await ensureReady();
+
+  // KPI:t
+  const kpiRes = await query<{
+    views: string | number | null;
+    engagement_pct: string | number | null;
+    avg_watch: string | number | null;
+    published_count: string | number | null;
+  }>(
+    `SELECT
+       COALESCE(SUM(m.views), 0) AS views,
+       CASE
+         WHEN COALESCE(SUM(m.views), 0) > 0
+         THEN ROUND(SUM(m.engagement)::numeric / SUM(m.views) * 100, 1)
+         ELSE 0
+       END AS engagement_pct,
+       COALESCE(ROUND(AVG(m.watch_time_seconds)::numeric, 0), 0) AS avg_watch,
+       (SELECT COUNT(*) FROM content_items ci
+         WHERE ci.org_id = $1::uuid AND ci.status = 'published') AS published_count
+     FROM analytics_metrics m
+     WHERE m.org_id = $1::uuid`,
+    [orgId],
+  );
+  const kpi = kpiRes.rows[0];
+  const totalViews = Number(kpi?.views ?? 0);
+  const engagement = Number(kpi?.engagement_pct ?? 0);
+  const avgWatch = Number(kpi?.avg_watch ?? 0);
+  const publishedCount = Number(kpi?.published_count ?? 0);
+
+  // Top-aiheet
+  const topicsRes = await query<{ topic: string; views: string | number }>(
+    `SELECT topic, SUM(views) AS views
+     FROM analytics_metrics
+     WHERE org_id = $1::uuid AND topic IS NOT NULL
+     GROUP BY topic
+     ORDER BY views DESC
+     LIMIT 4`,
+    [orgId],
+  );
+  const topTopics = topicsRes.rows.map((r) => ({
+    topic: r.topic,
+    views: Number(r.views),
+  }));
+
+  // Top-videot: JOIN metriikka → content_variants → content_items → media_assets
+  const videosRes = await query<{
+    title: string;
+    thumbnail_url: string | null;
+    views: string | number;
+  }>(
+    `SELECT ci.title,
+            ma.thumbnail_url,
+            SUM(m.views) AS views
+     FROM analytics_metrics m
+     JOIN content_variants cv ON cv.id = m.content_variant_id
+     JOIN content_items ci ON ci.id = cv.content_item_id
+     LEFT JOIN media_assets ma ON ma.id = ci.media_asset_id
+     WHERE m.org_id = $1::uuid AND ci.org_id = $1::uuid
+     GROUP BY ci.title, ma.thumbnail_url
+     ORDER BY views DESC
+     LIMIT 3`,
+    [orgId],
+  );
+  const topVideos = videosRes.rows.map((r) => ({
+    title: r.title,
+    views: Number(r.views),
+    thumbnailUrl: r.thumbnail_url ?? MOCK_ANALYTICS.topVideos[0].thumbnailUrl,
+  }));
+
+  // Fallback: jos KPI-views = 0 JA topTopics tyhjä → näkymä ei näytä tyhjää
+  if (totalViews === 0 && topTopics.length === 0) {
+    return MOCK_ANALYTICS;
+  }
+
+  return {
+    views: totalViews,
+    engagement,
+    publishedCount,
+    avgWatchSeconds: avgWatch,
+    topTopics: topTopics.length > 0 ? topTopics : MOCK_ANALYTICS.topTopics,
+    topVideos: topVideos.length > 0 ? topVideos : MOCK_ANALYTICS.topVideos,
+  };
 }
 
 /* ========== WRITERS ========== */

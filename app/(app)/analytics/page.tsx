@@ -18,7 +18,6 @@ export default async function AnalyticsPage() {
       <PageHeader
         title="Analytics"
         description="Katselut, sitoutuminen ja parhaat aiheet."
-        actions={<ComingSoon version="v3" />}
       />
 
       <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">

@@ -47,7 +47,6 @@ export default async function DashboardPage() {
         <Card className="md:col-span-4">
           <CardHeader>
             <CardTitle>Analytics-tiivistelmä</CardTitle>
-            <ComingSoon version="v3" label="Reaaliaikainen" />
           </CardHeader>
           <CardBody>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">

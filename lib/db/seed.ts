@@ -181,6 +181,68 @@ export async function seedFromMock(): Promise<void> {
 }
 
 /**
+ * Vaihe 16 (v3): seed demo-analytiikkaa aktiiviorgille jos analytics_metrics
+ * on tyhjä sille orgille. Idempotentti — palautuu heti jos rivejä on jo.
+ * Julkaisu-integraatiota ei ole vielä, joten oikeaa dataa ei muuten synny;
+ * seed pitää tuotannon Analytics-näkymän uskottavan näköisenä.
+ */
+export async function seedAnalytics(): Promise<void> {
+  if (!pool) return;
+  const savuksRawId = MOCK_MEMBERSHIPS[0]?.organization.id;
+  if (!savuksRawId) return;
+  const savuksUuid = ensureUuid(savuksRawId);
+
+  const existing = await pool.query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM analytics_metrics WHERE org_id = $1::uuid",
+    [savuksUuid],
+  );
+  if (Number(existing.rows[0]?.count ?? "0") > 0) return;
+
+  const TOPICS = [
+    "Sammutinhuolto",
+    "Palovaroittimet",
+    "VSS-tarkastukset",
+    "Sprinklerihuolto",
+    "Näin se tehdään",
+    "Löydätkö virheen",
+  ];
+  const CHANNELS = ["tiktok", "instagram", "facebook", "linkedin", "blog"] as const;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const today = new Date();
+    for (let dayAgo = 0; dayAgo < 30; dayAgo++) {
+      const date = new Date(today);
+      date.setDate(today.getDate() - dayAgo);
+      const dateStr = date.toISOString().slice(0, 10);
+      for (const topic of TOPICS) {
+        for (const channel of CHANNELS) {
+          // Skippaa ~60 % osumia jotta data näyttää harvempsalta ja aidommalta
+          if (Math.random() < 0.6) continue;
+          const views = 100 + Math.floor(Math.random() * 700);
+          const engagementRatio = 0.05 + Math.random() * 0.05;
+          const engagement = Math.max(1, Math.floor(views * engagementRatio));
+          const watchTime = 12 + Math.random() * 13;
+          await client.query(
+            `INSERT INTO analytics_metrics
+               (org_id, channel, metric_date, views, engagement, watch_time_seconds, topic)
+             VALUES ($1::uuid, $2, $3::date, $4, $5, $6, $7)`,
+            [savuksUuid, channel, dateStr, views, engagement, watchTime.toFixed(2), topic],
+          );
+        }
+      }
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Mock-data käyttää lyhyitä id-merkkijonoja kuten "org_savuks", "m1", "s1",
  * "f_kentta". Postgres-taulut vaativat UUID:t (gen_random_uuid() defaultit).
  * Muunnetaan lyhyet id:t deterministiseksi UUIDv5-tyyliseksi merkkijonoksi

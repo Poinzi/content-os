@@ -104,3 +104,25 @@ ALTER TABLE calendar_events
 ALTER TABLE calendar_events
   ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_calendar_variant ON calendar_events(content_variant_id) WHERE content_variant_id IS NOT NULL;
+
+-- Vaihe 16: analytics_metrics — v3 KPI:t, top-aiheet ja top-videot.
+-- Rivit voivat olla per-julkaisu (content_variant_id) tai aihe-tason yhteenveto
+-- (content_variant_id NULL, topic asetettu). Osittainen unique-indeksi estää
+-- tuplaamisen kun content_variant_id on olemassa.
+CREATE TABLE IF NOT EXISTS analytics_metrics (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  content_variant_id UUID REFERENCES content_variants(id) ON DELETE SET NULL,
+  channel TEXT CHECK (channel IN ('tiktok','instagram','facebook','linkedin','blog')),
+  metric_date DATE NOT NULL,
+  views INTEGER NOT NULL DEFAULT 0,
+  engagement INTEGER NOT NULL DEFAULT 0,
+  watch_time_seconds NUMERIC(10,2) NOT NULL DEFAULT 0,
+  topic TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_analytics_org ON analytics_metrics(org_id);
+CREATE INDEX IF NOT EXISTS idx_analytics_org_date ON analytics_metrics(org_id, metric_date);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_analytics_variant_date
+  ON analytics_metrics(content_variant_id, metric_date)
+  WHERE content_variant_id IS NOT NULL;

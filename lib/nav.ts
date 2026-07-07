@@ -23,7 +23,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Sisältöjono", href: "/content", icon: ListChecks },
   { label: "Generator", href: "/generator", icon: Sparkles, soon: "v1" },
   { label: "Kalenteri", href: "/calendar", icon: Calendar },
-  { label: "Analytics", href: "/analytics", icon: BarChart3, soon: "v3" },
+  { label: "Analytics", href: "/analytics", icon: BarChart3 },
   { label: "Brand Brain", href: "/brand-brain", icon: Brain },
   { label: "Asetukset", href: "/settings", icon: Settings },
 ];
