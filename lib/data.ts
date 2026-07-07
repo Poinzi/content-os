@@ -1235,3 +1235,136 @@ export async function markVariantPublished(
     client.release();
   }
 }
+
+/* ========== PUBLISHING (Vaihe 22) ========== */
+
+export interface DueScheduledJob {
+  eventId: string;
+  orgId: string;
+  channel: Channel;
+  variantId: string;
+  text: string;
+  itemTitle: string | null;
+  mediaUrl: string | null;
+}
+
+/**
+ * Vaihe 22: hae erääntyneet ajastukset (scheduled_at <= now(), status = scheduled).
+ * Sisältää kaiken mitä adapteri tarvitsee julkaisuun. Mock-tilassa []
+ * (moottori on no-op).
+ */
+export async function getDueScheduled(
+  limit = 25,
+): Promise<DueScheduledJob[]> {
+  if (useMock()) return [];
+  await ensureReady();
+  const { rows } = await query<{
+    event_id: string;
+    org_id: string;
+    channel: Channel;
+    variant_id: string;
+    variant_text: string;
+    item_title: string | null;
+    media_url: string | null;
+  }>(
+    `SELECT
+       ce.id            AS event_id,
+       ce.org_id        AS org_id,
+       ce.channel       AS channel,
+       ce.content_variant_id AS variant_id,
+       cv.body          AS variant_text,
+       ci.title         AS item_title,
+       ma.thumbnail_url AS media_url
+     FROM calendar_events ce
+     JOIN content_variants cv ON cv.id = ce.content_variant_id
+     LEFT JOIN content_items ci ON ci.id = cv.content_item_id
+     LEFT JOIN media_assets ma ON ma.id = ci.media_asset_id
+     WHERE ce.status = 'scheduled'
+       AND ce.content_variant_id IS NOT NULL
+       AND ce.scheduled_at <= now()
+     ORDER BY ce.scheduled_at ASC
+     LIMIT $1`,
+    [limit],
+  );
+  return rows.map((r) => ({
+    eventId: r.event_id,
+    orgId: r.org_id,
+    channel: r.channel,
+    variantId: r.variant_id,
+    text: r.variant_text ?? "",
+    itemTitle: r.item_title,
+    mediaUrl: r.media_url,
+  }));
+}
+
+/**
+ * Vaihe 22: viimeistele julkaisu adapterin onnistumisen jälkeen. Transaktio:
+ * - UPDATE calendar_events → 'published' vain jos rivi on yhä 'scheduled'
+ *   (race-suoja + idempotenssi). 0 päivitettyä riviä → false, ei jatketa.
+ * - UPDATE content_variants → 'published'
+ * - Kirjaa aloitusmetriikka (views/engagement 0) analytics_metricsiin, ei
+ *   tuplaa saman variantin + päivän riviä. Oikeat luvut tulevat myöhemmin
+ *   kanavien analytiikasta.
+ */
+export async function completePublish(
+  eventId: string,
+  variantId: string,
+  meta: { orgId: string; channel: Channel; itemTitle: string | null },
+): Promise<boolean> {
+  if (useMock()) return false;
+  await ensureReady();
+  if (!pool) return false;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const upd = await client.query(
+      `UPDATE calendar_events
+       SET status = 'published', published_at = NOW()
+       WHERE id = $1::uuid AND status = 'scheduled'`,
+      [eventId],
+    );
+    if (!upd.rowCount || upd.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return false;
+    }
+    await client.query(
+      `UPDATE content_variants
+       SET status = 'published'
+       WHERE id = $1::uuid`,
+      [variantId],
+    );
+    await client.query(
+      `INSERT INTO analytics_metrics
+         (org_id, content_variant_id, channel, metric_date,
+          views, engagement, watch_time_seconds, topic)
+       SELECT $1::uuid, $2::uuid, $3, current_date, 0, 0, 0, $4
+       WHERE NOT EXISTS (
+         SELECT 1 FROM analytics_metrics
+         WHERE content_variant_id = $2::uuid
+           AND metric_date = current_date
+       )`,
+      [meta.orgId, variantId, meta.channel, meta.itemTitle ?? null],
+    );
+    await client.query("COMMIT");
+    return true;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Vaihe 22: adapterin virhe → jätä 'scheduled'-tilaan seuraavaa cron-ajoa varten.
+ * Nykyisessä skeemassa ei ole erillistä error-saraketta, joten virhe lokitetaan
+ * cron-reitissä. Funktio jätetty täyskuntoiseksi tulevaa sarake-laajennusta varten.
+ */
+export async function failPublish(
+  _eventId: string,
+  _error: string,
+): Promise<void> {
+  if (useMock()) return;
+  await ensureReady();
+  // Ei tallennusta nyt.
+}

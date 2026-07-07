@@ -25,7 +25,8 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 export const config = {
   matcher: [
     // Ohita: _next-tiedostot, favicon, /login, /api/login, /join/*, /api/join,
-    // sekä yleiset staattiset assetit. Näihin ei koskaan vaadita istuntoa.
-    "/((?!_next/static|_next/image|favicon.ico|login|api/login|join|api/join|.*\\.(?:png|jpg|jpeg|svg|gif|ico|webp|avif|css|js|map|woff2?)$).*)",
+    // /api/cron/* (suojattu CRON_SECRETillä, ei istunnolla), sekä yleiset
+    // staattiset assetit. Näihin ei koskaan vaadita istuntoa.
+    "/((?!_next/static|_next/image|favicon.ico|login|api/login|join|api/join|api/cron|.*\\.(?:png|jpg|jpeg|svg|gif|ico|webp|avif|css|js|map|woff2?)$).*)",
   ],
 };
