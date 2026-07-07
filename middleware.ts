@@ -1,12 +1,33 @@
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { AUTH_COOKIE, gateEnabled, passwordToToken } from "@/lib/auth-gate";
 
-// Vaihe 1: middleware on placeholder. Kirjautuminen ja tenant-tarkistus lisätään
-// myöhemmässä vaiheessa. Nyt vain propagoi pyyntö sellaisenaan.
-export function middleware(_req: NextRequest) {
-  return NextResponse.next();
+/**
+ * Vaihe 18: salasanaportti koko sovellukselle. Jos APP_PASSWORD ei ole
+ * asetettu, päästetään kaikki läpi (portti pois päältä). Muuten kaikki
+ * matcherin kattamat reitit vaativat co_auth-evästeen, jonka arvo täsmää
+ * SHA-256-tokeniin salasanasta.
+ *
+ * Matcher jättää ulos /login, /api/login, /_next/*, /favicon.ico ja staattiset
+ * assetit, jotta login-sivu ja sen POST-endpointti toimivat aina.
+ */
+export async function middleware(req: NextRequest): Promise<NextResponse> {
+  if (!gateEnabled()) return NextResponse.next();
+
+  const password = process.env.APP_PASSWORD!;
+  const expected = await passwordToToken(password);
+  const cookie = req.cookies.get(AUTH_COOKIE)?.value;
+
+  if (cookie === expected) return NextResponse.next();
+
+  const url = req.nextUrl.clone();
+  const original = req.nextUrl.pathname + (req.nextUrl.search ?? "");
+  url.pathname = "/login";
+  url.search = `?next=${encodeURIComponent(original)}`;
+  return NextResponse.redirect(url);
 }
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|login|api/login|.*\\.(?:png|jpg|jpeg|svg|gif|ico|webp|avif|css|js|map|woff2?)$).*)",
+  ],
 };
