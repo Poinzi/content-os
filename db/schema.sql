@@ -141,3 +141,20 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE organization_members ADD COLUMN IF NOT EXISTS user_id TEXT;
 ALTER TABLE organization_members ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'editor';
 CREATE INDEX IF NOT EXISTS idx_org_members_user ON organization_members(user_id);
+
+-- Vaihe 20: kutsulinkit. Kertakäyttöinen token, voimassa 7 pv.
+-- invited_by on nullable eikä FK — omat users-taulu on totuuden lähde mutta
+-- kutsu voi säilyä vaikka kutsuja poistuisi.
+CREATE TABLE IF NOT EXISTS organization_invites (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('owner','admin','editor','reviewer','viewer')),
+  token TEXT NOT NULL UNIQUE,
+  invited_by UUID,
+  accepted_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_invites_org ON organization_invites(org_id);
+CREATE INDEX IF NOT EXISTS idx_invites_token ON organization_invites(token);

@@ -511,6 +511,303 @@ export async function setSeriesActive(
   );
 }
 
+/* ========== INVITES + MEMBERS (Vaihe 20) ========== */
+
+export interface InviteInfo {
+  organizationId: string;
+  organizationName: string;
+  email: string;
+  role: OrgRole;
+  expired: boolean;
+  accepted: boolean;
+}
+
+export interface MemberRow {
+  id: string;
+  email: string;
+  name: string | null;
+  role: OrgRole;
+}
+
+export interface PendingInvite {
+  id: string;
+  email: string;
+  role: OrgRole;
+  expiresAt: string;
+}
+
+export async function createInvite(
+  orgId: string,
+  email: string,
+  role: OrgRole,
+  invitedBy: string | null,
+): Promise<{ token: string }> {
+  const token =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2) + Date.now().toString(36);
+  if (useMock()) return { token };
+  await ensureReady();
+  const inviter =
+    invitedBy && /^[0-9a-f-]{36}$/i.test(invitedBy) ? invitedBy : null;
+  await query(
+    `INSERT INTO organization_invites
+       (org_id, email, role, token, invited_by, expires_at)
+     VALUES ($1::uuid, lower($2), $3, $4, $5, now() + interval '7 days')`,
+    [orgId, email.trim(), role, token, inviter],
+  );
+  return { token };
+}
+
+export async function getInviteByToken(
+  token: string,
+): Promise<InviteInfo | null> {
+  if (useMock()) return null;
+  await ensureReady();
+  const { rows } = await query<{
+    org_id: string;
+    org_name: string;
+    email: string;
+    role: OrgRole;
+    expired: boolean;
+    accepted: boolean;
+  }>(
+    `SELECT
+       i.org_id,
+       o.name AS org_name,
+       i.email,
+       i.role,
+       (i.expires_at < now()) AS expired,
+       (i.accepted_at IS NOT NULL) AS accepted
+     FROM organization_invites i
+     JOIN organizations o ON o.id = i.org_id
+     WHERE i.token = $1
+     LIMIT 1`,
+    [token],
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    organizationId: r.org_id,
+    organizationName: r.org_name,
+    email: r.email,
+    role: r.role,
+    expired: !!r.expired,
+    accepted: !!r.accepted,
+  };
+}
+
+/**
+ * Hyväksy kutsu: luo users-rivi (jos ei ole) + linkitä org_memberiksi + merkitse
+ * kutsu käytetyksi. Transaktio: virheessä kaikki peruutetaan. Palauttaa uuden
+ * käyttäjän id:n (tai virheavaimen "invalid"/"exists").
+ */
+export async function acceptInvite(
+  token: string,
+  data: { name: string; password: string },
+): Promise<
+  | { userId: string; orgId: string; role: OrgRole }
+  | { error: "invalid" | "exists" }
+> {
+  if (useMock()) return { error: "invalid" };
+  await ensureReady();
+  const { hashPassword } = await import("@/lib/auth");
+  if (!pool) return { error: "invalid" };
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const inv = await client.query<{
+      id: string;
+      org_id: string;
+      email: string;
+      role: OrgRole;
+      expires_at: string;
+      accepted_at: string | null;
+    }>(
+      `SELECT id, org_id, email, role, expires_at, accepted_at
+       FROM organization_invites
+       WHERE token = $1
+       FOR UPDATE`,
+      [token],
+    );
+    const invite = inv.rows[0];
+    if (
+      !invite ||
+      invite.accepted_at !== null ||
+      new Date(invite.expires_at).getTime() < Date.now()
+    ) {
+      await client.query("ROLLBACK");
+      return { error: "invalid" };
+    }
+
+    const existing = await client.query<{ id: string }>(
+      `SELECT id FROM users WHERE email = lower($1)`,
+      [invite.email],
+    );
+    if (existing.rows.length > 0) {
+      await client.query("ROLLBACK");
+      return { error: "exists" };
+    }
+
+    const hash = await hashPassword(data.password);
+    const nameClean = data.name.trim() || null;
+    const userRes = await client.query<{ id: string }>(
+      `INSERT INTO users (email, password_hash, name)
+       VALUES (lower($1), $2, $3)
+       RETURNING id`,
+      [invite.email, hash, nameClean],
+    );
+    const userId = userRes.rows[0].id;
+    await client.query(
+      `INSERT INTO organization_members (org_id, user_id, role)
+       VALUES ($1::uuid, $2, $3)
+       ON CONFLICT (org_id, user_id) DO NOTHING`,
+      [invite.org_id, userId, invite.role],
+    );
+    await client.query(
+      `UPDATE organization_invites SET accepted_at = now() WHERE id = $1::uuid`,
+      [invite.id],
+    );
+    await client.query("COMMIT");
+    return { userId, orgId: invite.org_id, role: invite.role };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listMembers(orgId: string): Promise<MemberRow[]> {
+  if (useMock()) {
+    return [
+      {
+        id: "demo-admin",
+        email: process.env.ADMIN_EMAIL ?? "demo@local",
+        name: "Demo Admin",
+        role: "admin",
+      },
+    ];
+  }
+  await ensureReady();
+  const { rows } = await query<{
+    id: string;
+    email: string;
+    name: string | null;
+    role: OrgRole;
+  }>(
+    `SELECT u.id::text AS id, u.email, u.name, m.role
+     FROM organization_members m
+     JOIN users u ON u.id::text = m.user_id
+     WHERE m.org_id = $1::uuid
+     ORDER BY
+       CASE m.role
+         WHEN 'owner'    THEN 1
+         WHEN 'admin'    THEN 2
+         WHEN 'editor'   THEN 3
+         WHEN 'reviewer' THEN 4
+         WHEN 'viewer'   THEN 5
+         ELSE 6
+       END,
+       u.email`,
+    [orgId],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    email: r.email,
+    name: r.name,
+    role: r.role,
+  }));
+}
+
+export async function listPendingInvites(
+  orgId: string,
+): Promise<PendingInvite[]> {
+  if (useMock()) return [];
+  await ensureReady();
+  const { rows } = await query<{
+    id: string;
+    email: string;
+    role: OrgRole;
+    expires_at: Date | string;
+  }>(
+    `SELECT id, email, role, expires_at
+     FROM organization_invites
+     WHERE org_id = $1::uuid
+       AND accepted_at IS NULL
+       AND expires_at > now()
+     ORDER BY created_at DESC`,
+    [orgId],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    email: r.email,
+    role: r.role,
+    expiresAt: toIso(r.expires_at),
+  }));
+}
+
+export async function revokeInvite(
+  orgId: string,
+  inviteId: string,
+): Promise<void> {
+  if (useMock()) return;
+  await ensureReady();
+  await query(
+    `DELETE FROM organization_invites
+     WHERE id = $1::uuid AND org_id = $2::uuid`,
+    [inviteId, orgId],
+  );
+}
+
+/**
+ * Poista jäsen orgista. Estää: itsensä poiston (kutsuja tarkistaa)
+ * ja viimeisen adminin poiston (tässä funktiossa: throw "last-admin").
+ */
+export async function removeMember(
+  orgId: string,
+  userId: string,
+): Promise<void> {
+  if (useMock()) return;
+  await ensureReady();
+  if (!pool) return;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // Onko poistettava viimeinen admin?
+    const target = await client.query<{ role: OrgRole }>(
+      `SELECT role FROM organization_members
+       WHERE org_id = $1::uuid AND user_id = $2
+       FOR UPDATE`,
+      [orgId, userId],
+    );
+    const targetRole = target.rows[0]?.role;
+    if (targetRole === "admin" || targetRole === "owner") {
+      const count = await client.query<{ n: string }>(
+        `SELECT count(*)::text AS n
+         FROM organization_members
+         WHERE org_id = $1::uuid AND role IN ('admin','owner')`,
+        [orgId],
+      );
+      if (Number(count.rows[0]?.n ?? "0") <= 1) {
+        await client.query("ROLLBACK");
+        throw new Error("last-admin");
+      }
+    }
+    await client.query(
+      `DELETE FROM organization_members
+       WHERE org_id = $1::uuid AND user_id = $2`,
+      [orgId, userId],
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * Tallenna Vision-analyysi mediaan. Mock-tilassa tai ilman DATABASE_URL:ää
  * ei kirjoiteta mihinkään — kutsuja käsittelee palautetun analyysin

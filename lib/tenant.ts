@@ -5,6 +5,7 @@ import {
   getOrganizationById,
 } from "@/lib/data";
 import { authEnabled, SESSION_COOKIE, verifySession } from "@/lib/auth";
+import { hasRole } from "@/lib/types";
 import type { AuthUser, Membership, Organization, OrgRole } from "@/lib/types";
 
 export const ACTIVE_ORG_COOKIE = "content-os-active-org";
@@ -67,4 +68,15 @@ export async function getTenantContext(): Promise<TenantContext | null> {
     role,
   };
   return { org, role, memberships, user };
+}
+
+/**
+ * Vaihe 20: käyttöoikeus admin-toimintoihin. Heittää "forbidden" jos ei ole
+ * kirjautuneena tai rooli < admin. API-routet kääntävät heiton 403:ksi.
+ */
+export async function requireAdmin(): Promise<TenantContext> {
+  const ctx = await getTenantContext();
+  if (!ctx) throw new Error("unauthorized");
+  if (!hasRole(ctx.role, "admin")) throw new Error("forbidden");
+  return ctx;
 }
