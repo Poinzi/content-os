@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTenantContext } from "@/lib/tenant";
+import { requireAdmin } from "@/lib/tenant";
 import { setSeriesActive } from "@/lib/data";
 
 export const runtime = "nodejs";
@@ -8,15 +8,21 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  const { id } = await params;
+  let ctx;
   try {
-    const { id } = await params;
-    const ctx = await getTenantContext();
-    if (!ctx) {
+    ctx = await requireAdmin();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
+    if (msg === "forbidden") {
       return NextResponse.json(
-        { error: "Ei aktiivista organisaatiota" },
-        { status: 401 },
+        { error: "Vain ylläpitäjät voivat muokata sarjoja" },
+        { status: 403 },
       );
     }
+    return NextResponse.json({ error: "Kirjaudu sisään" }, { status: 401 });
+  }
+  try {
     const body = (await req.json().catch(() => null)) as
       | { isActive?: boolean }
       | null;

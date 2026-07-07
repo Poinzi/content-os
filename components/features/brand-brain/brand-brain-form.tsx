@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { AlertTriangle, Check, Info, X } from "lucide-react";
+import { AlertTriangle, Check, Info, Lock, X } from "lucide-react";
 import type { BrandBrain, ContentSeries } from "@/lib/types";
 import { Card, CardBody } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 interface Props {
   initial: BrandBrain;
+  canEdit?: boolean;
 }
 
 type SaveState = "saved" | "dirty" | "saving" | "error";
@@ -21,7 +22,7 @@ const BRAIN_FIELDS: ReadonlyArray<
   >
 > = ["writingStyle", "toneOfVoice", "values", "services", "targetAudiences", "ctas"];
 
-export function BrandBrainForm({ initial }: Props) {
+export function BrandBrainForm({ initial, canEdit = true }: Props) {
   const [data, setData] = useState<BrandBrain>(initial);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,6 +61,7 @@ export function BrandBrainForm({ initial }: Props) {
   };
 
   const update = <K extends keyof BrandBrain>(key: K, value: BrandBrain[K]) => {
+    if (!canEdit) return;
     setData((d) => {
       const next = { ...d, [key]: value };
       latestRef.current = next;
@@ -74,6 +76,7 @@ export function BrandBrainForm({ initial }: Props) {
   };
 
   const toggleSeries = async (seriesId: string) => {
+    if (!canEdit) return;
     // Optimistinen: käännä paikallisesti heti, kutsu API, rollback jos error.
     const before = latestRef.current.allowedSeries;
     const target = before.find((x) => x.id === seriesId);
@@ -123,7 +126,12 @@ export function BrandBrainForm({ initial }: Props) {
             </p>
           </div>
           <div className="shrink-0 text-xs">
-            {saveState === "saved" ? (
+            {!canEdit ? (
+              <span className="inline-flex items-center gap-1 text-text-tertiary">
+                <Lock className="h-3.5 w-3.5" />
+                Vain katselu — ylläpitäjä voi muokata brändiä
+              </span>
+            ) : saveState === "saved" ? (
               <span className="inline-flex items-center gap-1 text-status-success">
                 <Check className="h-3.5 w-3.5" />
                 Tallennettu
@@ -147,6 +155,7 @@ export function BrandBrainForm({ initial }: Props) {
           value={data.writingStyle}
           onChange={(v) => update("writingStyle", v)}
           placeholder="Selkeä, konkreettinen, ei myyntitermejä…"
+          disabled={!canEdit}
         />
       </BlockCard>
 
@@ -155,6 +164,7 @@ export function BrandBrainForm({ initial }: Props) {
           value={data.toneOfVoice}
           onChange={(v) => update("toneOfVoice", v)}
           placeholder="Ammattilaiselta ammattilaiselle…"
+          disabled={!canEdit}
         />
       </BlockCard>
 
@@ -174,6 +184,7 @@ export function BrandBrainForm({ initial }: Props) {
             )
           }
           placeholder="Lisää palvelu ja paina Enter"
+          disabled={!canEdit}
         />
       </BlockCard>
 
@@ -182,6 +193,7 @@ export function BrandBrainForm({ initial }: Props) {
           items={data.targetAudiences}
           onChange={(v) => update("targetAudiences", v)}
           placeholder="Lisää kohderyhmä ja paina Enter"
+          disabled={!canEdit}
         />
       </BlockCard>
 
@@ -190,6 +202,7 @@ export function BrandBrainForm({ initial }: Props) {
           items={data.ctas}
           onChange={(v) => update("ctas", v)}
           placeholder="Lisää CTA ja paina Enter"
+          disabled={!canEdit}
         />
       </BlockCard>
 
@@ -198,6 +211,7 @@ export function BrandBrainForm({ initial }: Props) {
           value={data.values}
           onChange={(v) => update("values", v)}
           placeholder="Turvallisuus, luotettavuus…"
+          disabled={!canEdit}
         />
       </BlockCard>
 
@@ -213,6 +227,7 @@ export function BrandBrainForm({ initial }: Props) {
               onToggle={() => {
                 void toggleSeries(s.id);
               }}
+              disabled={!canEdit}
             />
           ))}
         </div>
@@ -245,10 +260,12 @@ function TextArea({
   value,
   onChange,
   placeholder,
+  disabled = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  disabled?: boolean;
 }) {
   return (
     <textarea
@@ -256,7 +273,13 @@ function TextArea({
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       rows={3}
-      className="w-full resize-none rounded-md border border-border-subtle bg-bg-base px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary transition-colors focus:border-border-strong focus:outline-none"
+      disabled={disabled}
+      readOnly={disabled}
+      className={cn(
+        "w-full resize-none rounded-md border border-border-subtle bg-bg-base px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary transition-colors focus:border-border-strong focus:outline-none",
+        disabled &&
+          "cursor-not-allowed bg-bg-surface-2 text-text-secondary focus:border-border-subtle",
+      )}
     />
   );
 }
@@ -265,20 +288,24 @@ function ChipList({
   items,
   onChange,
   placeholder,
+  disabled = false,
 }: {
   items: string[];
   onChange: (v: string[]) => void;
   placeholder?: string;
+  disabled?: boolean;
 }) {
   const [input, setInput] = useState("");
 
   const remove = (i: number) => {
+    if (disabled) return;
     const next = items.slice();
     next.splice(i, 1);
     onChange(next);
   };
 
   const add = () => {
+    if (disabled) return;
     const v = input.trim();
     if (!v) return;
     if (items.includes(v)) {
@@ -290,7 +317,12 @@ function ChipList({
   };
 
   return (
-    <div className="rounded-md border border-border-subtle bg-bg-base p-2">
+    <div
+      className={cn(
+        "rounded-md border border-border-subtle bg-bg-base p-2",
+        disabled && "bg-bg-surface-2",
+      )}
+    >
       <div className="flex flex-wrap gap-2">
         {items.map((it, i) => (
           <span
@@ -298,36 +330,44 @@ function ChipList({
             className="inline-flex items-center gap-1 rounded-md bg-bg-surface-2 px-2 py-1 text-xs text-text-primary"
           >
             {it}
-            <button
-              type="button"
-              onClick={() => remove(i)}
-              className="text-text-tertiary transition-colors hover:text-text-primary"
-              aria-label={`Poista ${it}`}
-            >
-              <X className="h-3 w-3" />
-            </button>
+            {!disabled ? (
+              <button
+                type="button"
+                onClick={() => remove(i)}
+                className="text-text-tertiary transition-colors hover:text-text-primary"
+                aria-label={`Poista ${it}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            ) : null}
           </span>
         ))}
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              add();
-            } else if (
-              e.key === "Backspace" &&
-              !input &&
-              items.length > 0
-            ) {
-              e.preventDefault();
-              remove(items.length - 1);
-            }
-          }}
-          onBlur={add}
-          placeholder={placeholder}
-          className="flex-1 min-w-[160px] bg-transparent px-2 py-1 text-xs text-text-primary placeholder:text-text-tertiary outline-none"
-        />
+        {!disabled ? (
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                add();
+              } else if (
+                e.key === "Backspace" &&
+                !input &&
+                items.length > 0
+              ) {
+                e.preventDefault();
+                remove(items.length - 1);
+              }
+            }}
+            onBlur={add}
+            placeholder={placeholder}
+            className="flex-1 min-w-[160px] bg-transparent px-2 py-1 text-xs text-text-primary placeholder:text-text-tertiary outline-none"
+          />
+        ) : items.length === 0 ? (
+          <span className="px-2 py-1 text-xs text-text-tertiary">
+            (tyhjä)
+          </span>
+        ) : null}
       </div>
     </div>
   );
@@ -336,19 +376,25 @@ function ChipList({
 function SeriesToggle({
   series,
   onToggle,
+  disabled = false,
 }: {
   series: ContentSeries;
   onToggle: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onToggle}
+      disabled={disabled}
       className={cn(
         "rounded-full border px-3 py-1.5 text-xs transition-colors",
         series.isActive
           ? "border-accent bg-accent/10 text-text-primary"
-          : "border-border-subtle bg-bg-surface-2 text-text-tertiary hover:border-border-strong hover:text-text-secondary",
+          : "border-border-subtle bg-bg-surface-2 text-text-tertiary",
+        !disabled && !series.isActive &&
+          "hover:border-border-strong hover:text-text-secondary",
+        disabled && "cursor-not-allowed opacity-70",
       )}
       title={series.description ?? undefined}
     >

@@ -7,6 +7,7 @@ import {
   Brain,
   Settings,
   ListChecks,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -15,6 +16,7 @@ export type NavItem = {
   href: string;
   icon: LucideIcon;
   soon?: string;
+  adminOnly?: boolean;
 };
 
 export const NAV_ITEMS: NavItem[] = [
@@ -25,5 +27,6 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Kalenteri", href: "/calendar", icon: Calendar },
   { label: "Analytics", href: "/analytics", icon: BarChart3 },
   { label: "Brand Brain", href: "/brand-brain", icon: Brain },
+  { label: "Jäsenet", href: "/settings/members", icon: Users, adminOnly: true },
   { label: "Asetukset", href: "/settings", icon: Settings },
 ];

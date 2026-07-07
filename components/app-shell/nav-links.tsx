@@ -5,12 +5,17 @@ import { usePathname } from "next/navigation";
 import { NAV_ITEMS } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { ComingSoon } from "@/components/ui/skeleton";
+import { hasRole } from "@/lib/types";
+import type { OrgRole } from "@/lib/types";
 
-export function NavLinks() {
+export function NavLinks({ role }: { role: OrgRole }) {
   const pathname = usePathname();
+  const items = NAV_ITEMS.filter(
+    (i) => !i.adminOnly || hasRole(role, "admin"),
+  );
   return (
     <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-2">
-      {NAV_ITEMS.map((item) => {
+      {items.map((item) => {
         const Icon = item.icon;
         const active =
           pathname === item.href ||

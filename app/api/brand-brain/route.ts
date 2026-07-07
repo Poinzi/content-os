@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTenantContext } from "@/lib/tenant";
+import { requireAdmin } from "@/lib/tenant";
 import { updateBrandBrain } from "@/lib/data";
 import type { BrandBrain } from "@/lib/types";
 
@@ -15,14 +15,20 @@ interface PatchBody {
 }
 
 export async function PATCH(req: Request): Promise<NextResponse> {
+  let ctx;
   try {
-    const ctx = await getTenantContext();
-    if (!ctx) {
+    ctx = await requireAdmin();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
+    if (msg === "forbidden") {
       return NextResponse.json(
-        { error: "Ei aktiivista organisaatiota" },
-        { status: 401 },
+        { error: "Vain ylläpitäjät voivat muokata Brand Brainia" },
+        { status: 403 },
       );
     }
+    return NextResponse.json({ error: "Kirjaudu sisään" }, { status: 401 });
+  }
+  try {
     const raw = (await req.json().catch(() => null)) as PatchBody | null;
     if (!raw) {
       return NextResponse.json({ error: "Virheellinen JSON" }, { status: 400 });

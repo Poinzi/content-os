@@ -17,12 +17,16 @@ export default async function AppLayout({
 
   return (
     <div className="min-h-screen bg-bg-base">
-      <Sidebar memberships={ctx.memberships} activeOrgId={ctx.org.id} />
+      <Sidebar
+        memberships={ctx.memberships}
+        activeOrgId={ctx.org.id}
+        role={ctx.role}
+      />
       <div className="md:pl-64">
         <Topbar userName={ctx.org.name} showLogout={authEnabled()} />
         <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>
       </div>
-      <CommandPalette />
+      <CommandPalette role={ctx.role} />
     </div>
   );
 }

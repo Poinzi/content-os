@@ -4,6 +4,8 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { NAV_ITEMS } from "@/lib/nav";
+import { hasRole } from "@/lib/types";
+import type { OrgRole } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Command = {
@@ -14,7 +16,7 @@ type Command = {
   disabled?: boolean;
 };
 
-export function CommandPalette() {
+export function CommandPalette({ role = "admin" }: { role?: OrgRole } = {}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -46,7 +48,10 @@ export function CommandPalette() {
   }, [open]);
 
   const commands = useMemo<Command[]>(() => {
-    const navCmds: Command[] = NAV_ITEMS.map((n) => ({
+    const visible = NAV_ITEMS.filter(
+      (n) => !n.adminOnly || hasRole(role, "admin"),
+    );
+    const navCmds: Command[] = visible.map((n) => ({
       id: `nav:${n.href}`,
       label: n.label,
       hint: n.soon ? `Tulossa ${n.soon}` : "Navigointi",
@@ -62,7 +67,7 @@ export function CommandPalette() {
       },
     ];
     return [...navCmds, ...extras];
-  }, [router]);
+  }, [router, role]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return commands;
