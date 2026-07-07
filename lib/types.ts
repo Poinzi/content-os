@@ -97,6 +97,8 @@ export interface CalendarEvent {
   status: "draft" | "scheduled" | "published";
   scheduledAt: string;
   thumbnailUrl?: string;
+  contentVariantId?: string; // linkitys editoriin (valinnainen)
+  contentItemId?: string; // linkitys Sisältöjonoon (valinnainen)
 }
 
 export interface AnalyticsSummary {

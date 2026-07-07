@@ -1,7 +1,6 @@
 import { getTenantContext } from "@/lib/tenant";
 import { getCalendarEvents } from "@/lib/data";
 import { PageHeader } from "@/components/ui/page-header";
-import { ComingSoon } from "@/components/ui/skeleton";
 import { WeekCalendar } from "@/components/features/calendar/week-calendar";
 
 export default async function CalendarPage() {
@@ -13,8 +12,7 @@ export default async function CalendarPage() {
     <div className="space-y-6">
       <PageHeader
         title="Julkaisukalenteri"
-        description="Raahaa julkaisuja. Värit: luonnos · ajastettu · julkaistu."
-        actions={<ComingSoon version="v2" />}
+        description="Ajastetut ja julkaistut sisällöt. Värit: luonnos · ajastettu · julkaistu."
       />
       <div className="mb-4 flex items-center gap-4 text-[12px] text-text-tertiary">
         <Legend colorClass="bg-status-neutral" label="Luonnos" />

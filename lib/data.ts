@@ -107,6 +107,8 @@ interface CalendarRow {
   status: CalendarEvent["status"];
   scheduled_at: Date | string;
   thumbnail_url: string | null;
+  content_variant_id: string | null;
+  content_item_id: string | null;
 }
 function mapCalendarEvent(r: CalendarRow): CalendarEvent {
   return {
@@ -116,6 +118,8 @@ function mapCalendarEvent(r: CalendarRow): CalendarEvent {
     status: r.status,
     scheduledAt: toIso(r.scheduled_at),
     thumbnailUrl: r.thumbnail_url ?? undefined,
+    contentVariantId: r.content_variant_id ?? undefined,
+    contentItemId: r.content_item_id ?? undefined,
   };
 }
 
@@ -252,11 +256,23 @@ export async function getContentQueue(orgId: string): Promise<ContentItem[]> {
 export async function getCalendarEvents(orgId: string): Promise<CalendarEvent[]> {
   if (useMock()) return MOCK_CALENDAR;
   await ensureReady();
+  // LEFT JOIN sallii seed-eventit joilla ei ole content_variant_id:tä.
+  // Kun content_variant_id on olemassa, käytetään item.title:ää.
   const { rows } = await query<CalendarRow>(
-    `SELECT id, title, channel, status, scheduled_at, thumbnail_url
-     FROM calendar_events
-     WHERE org_id = $1
-     ORDER BY scheduled_at`,
+    `SELECT
+        ce.id,
+        COALESCE(ci.title, ce.title) AS title,
+        ce.channel,
+        ce.status,
+        ce.scheduled_at,
+        ce.thumbnail_url,
+        ce.content_variant_id,
+        cv.content_item_id
+     FROM calendar_events ce
+     LEFT JOIN content_variants cv ON cv.id = ce.content_variant_id
+     LEFT JOIN content_items ci ON ci.id = cv.content_item_id
+     WHERE ce.org_id = $1
+     ORDER BY ce.scheduled_at`,
     [orgId],
   );
   return rows.map(mapCalendarEvent);
@@ -555,4 +571,144 @@ export async function updateContentItemStatus(
      WHERE id = $2::uuid AND org_id = $3::uuid`,
     [status, itemId, orgId],
   );
+}
+
+/* ========== CALENDAR SCHEDULING ========== */
+
+/**
+ * Ajasta variantti julkaisukalenteriin. Poistaa ensin mahdollisen aiemman
+ * calendar_events-rivin samalle variantille (peruttu ja uudelleenajastettu
+ * ketjua varten), sitten INSERT uusi rivi jonka title tulee itemistä.
+ * Lopuksi UPDATE content_variants SET status='scheduled'.
+ *
+ * Kaikki yhdessä transaktiossa. Rajaus org:iin JOINilla content_items:n kautta.
+ */
+export async function scheduleVariant(
+  orgId: string,
+  variantId: string,
+  scheduledAt: string,
+): Promise<void> {
+  if (useMock()) return;
+  await ensureReady();
+  if (!pool) return;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // Poista aiempi rivi jos oli
+    await client.query(
+      `DELETE FROM calendar_events
+       WHERE content_variant_id = $1::uuid
+         AND org_id = $2::uuid`,
+      [variantId, orgId],
+    );
+    // Luo uusi rivi — otsikko ja channel tulevat variantin/itemin kautta
+    const res = await client.query(
+      `INSERT INTO calendar_events
+         (org_id, title, channel, status, scheduled_at, content_variant_id)
+       SELECT $1::uuid, ci.title, cv.channel, 'scheduled', $2::timestamptz, cv.id
+       FROM content_variants cv
+       JOIN content_items ci ON ci.id = cv.content_item_id
+       WHERE cv.id = $3::uuid AND ci.org_id = $1::uuid
+       RETURNING id`,
+      [orgId, scheduledAt, variantId],
+    );
+    if (res.rowCount === 0) {
+      throw new Error("Variantti ei löytynyt organisaatiosta");
+    }
+    // Päivitä variantti scheduled-tilaan (org-tarkistus content_items:n kautta)
+    await client.query(
+      `UPDATE content_variants
+       SET status = 'scheduled'
+       WHERE id = $1::uuid
+         AND content_item_id IN (
+           SELECT id FROM content_items WHERE org_id = $2::uuid
+         )`,
+      [variantId, orgId],
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Peru ajastus: poista calendar_events-rivi ja palauta variantti approved-tilaan.
+ */
+export async function unscheduleVariant(
+  orgId: string,
+  variantId: string,
+): Promise<void> {
+  if (useMock()) return;
+  await ensureReady();
+  if (!pool) return;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `DELETE FROM calendar_events
+       WHERE content_variant_id = $1::uuid
+         AND org_id = $2::uuid`,
+      [variantId, orgId],
+    );
+    await client.query(
+      `UPDATE content_variants
+       SET status = 'approved'
+       WHERE id = $1::uuid
+         AND content_item_id IN (
+           SELECT id FROM content_items WHERE org_id = $2::uuid
+         )`,
+      [variantId, orgId],
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Merkitse variantti julkaistuksi (manuaalinen tila-siirtymä).
+ * Ei kutsua ulkoisiin API:hin — se on erillinen v2+ vaihe.
+ */
+export async function markVariantPublished(
+  orgId: string,
+  variantId: string,
+): Promise<void> {
+  if (useMock()) return;
+  await ensureReady();
+  if (!pool) return;
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `UPDATE calendar_events
+       SET status = 'published', published_at = NOW()
+       WHERE content_variant_id = $1::uuid
+         AND org_id = $2::uuid`,
+      [variantId, orgId],
+    );
+    await client.query(
+      `UPDATE content_variants
+       SET status = 'published'
+       WHERE id = $1::uuid
+         AND content_item_id IN (
+           SELECT id FROM content_items WHERE org_id = $2::uuid
+         )`,
+      [variantId, orgId],
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }

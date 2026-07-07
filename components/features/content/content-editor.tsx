@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Send, CheckCheck, Undo2 } from "lucide-react";
+import { Check, Send, CheckCheck, Undo2, Calendar, X } from "lucide-react";
 import type {
   ContentItemDetail,
   ContentStatus,
@@ -24,6 +24,8 @@ interface EditableVariant extends ContentVariant {
   hashtagsInput: string; // pilkulla erotettu näkymä editointia varten
   saveState: SaveState;
   errorMsg?: string;
+  scheduleInput: string; // datetime-local -kentän arvo (paikallinen aika)
+  scheduledAt?: string; // ISO-8601 kun ajastettu
 }
 
 function toEditable(v: ContentVariant): EditableVariant {
@@ -31,7 +33,28 @@ function toEditable(v: ContentVariant): EditableVariant {
     ...v,
     hashtagsInput: v.hashtags.join(", "),
     saveState: "idle",
+    scheduleInput: "",
   };
+}
+
+/**
+ * Muunna ISO-8601 datetime-local -kenttäformaattiin (paikallinen aika,
+ * ilman aikavyöhykemerkintää).
+ */
+function isoToLocalInput(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function formatSchedule(iso: string): string {
+  return new Date(iso).toLocaleString("fi-FI", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function nextItemStatus(current: ContentStatus): ContentStatus | null {
@@ -134,6 +157,79 @@ export function ContentEditor({ item }: Props) {
       console.error(err);
     } finally {
       setItemBusy(false);
+    }
+  }
+
+  async function scheduleVariant(idx: number) {
+    const v = variants[idx];
+    if (!v.scheduleInput) return;
+    // datetime-local ei sisällä aikavyöhykettä; new Date() tulkitsee sen paikallisena
+    const scheduledIso = new Date(v.scheduleInput).toISOString();
+    patchVariant(idx, { saveState: "saving" });
+    try {
+      const res = await fetch(`/api/content/variants/${v.id}/schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduledAt: scheduledIso }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      patchVariant(idx, {
+        status: "scheduled",
+        scheduledAt: scheduledIso,
+        saveState: "saved",
+      });
+      setTimeout(() => patchVariant(idx, { saveState: "idle" }), 800);
+      router.refresh();
+    } catch (err) {
+      patchVariant(idx, {
+        saveState: "error",
+        errorMsg: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  async function cancelSchedule(idx: number) {
+    const v = variants[idx];
+    patchVariant(idx, { saveState: "saving" });
+    try {
+      const res = await fetch(`/api/content/variants/${v.id}/schedule`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      patchVariant(idx, {
+        status: "approved",
+        scheduledAt: undefined,
+        scheduleInput: "",
+        saveState: "saved",
+      });
+      setTimeout(() => patchVariant(idx, { saveState: "idle" }), 800);
+      router.refresh();
+    } catch (err) {
+      patchVariant(idx, {
+        saveState: "error",
+        errorMsg: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  async function publishVariant(idx: number) {
+    const v = variants[idx];
+    patchVariant(idx, { saveState: "saving" });
+    try {
+      const res = await fetch(`/api/content/variants/${v.id}/schedule`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "publish" }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      patchVariant(idx, { status: "published", saveState: "saved" });
+      setTimeout(() => patchVariant(idx, { saveState: "idle" }), 800);
+      router.refresh();
+    } catch (err) {
+      patchVariant(idx, {
+        saveState: "error",
+        errorMsg: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -267,18 +363,104 @@ export function ContentEditor({ item }: Props) {
                     Tallennettu
                   </span>
                 ) : null}
-                {v.saveState === "error" ? (
-                  <span
-                    className={cn(
-                      "text-xs text-red-400",
-                      "truncate max-w-[240px]",
-                    )}
-                    title={v.errorMsg}
-                  >
-                    Virhe: {v.errorMsg}
-                  </span>
-                ) : null}
               </div>
+
+              {/* Ajastus-kontrollit — vaihe 13 */}
+              {v.status === "approved" ? (
+                <div className="mt-3 flex flex-wrap items-end gap-2 rounded-md border border-border-subtle bg-bg-base px-3 py-2">
+                  <div className="min-w-[200px]">
+                    <label className="text-[11px] uppercase tracking-wider text-text-tertiary">
+                      Julkaisuaika
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={v.scheduleInput}
+                      onChange={(e) =>
+                        patchVariant(i, { scheduleInput: e.target.value })
+                      }
+                      className="mt-1 w-full rounded-md border border-border-subtle bg-bg-surface px-3 py-1.5 text-sm text-text-primary transition-colors focus:border-border-strong focus:outline-none"
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => scheduleVariant(i)}
+                    disabled={!v.scheduleInput}
+                    className="gap-2"
+                  >
+                    <Calendar className="h-3.5 w-3.5" />
+                    Ajasta julkaisu
+                  </Button>
+                </div>
+              ) : null}
+              {v.status === "scheduled" ? (
+                <div className="mt-3 space-y-2 rounded-md border border-indigo-500/30 bg-indigo-500/10 px-3 py-2">
+                  <div className="text-xs text-indigo-100">
+                    <Calendar className="mr-1 inline h-3 w-3" />
+                    Ajastettu:{" "}
+                    <b>
+                      {v.scheduledAt
+                        ? formatSchedule(v.scheduledAt)
+                        : "(aika ei näy — refresh)"}
+                    </b>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="min-w-[200px]">
+                      <label className="text-[11px] uppercase tracking-wider text-text-tertiary">
+                        Uusi aika (valinnainen)
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={
+                          v.scheduleInput ||
+                          (v.scheduledAt ? isoToLocalInput(v.scheduledAt) : "")
+                        }
+                        onChange={(e) =>
+                          patchVariant(i, { scheduleInput: e.target.value })
+                        }
+                        className="mt-1 w-full rounded-md border border-border-subtle bg-bg-surface px-3 py-1.5 text-sm text-text-primary transition-colors focus:border-border-strong focus:outline-none"
+                      />
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => scheduleVariant(i)}
+                      disabled={!v.scheduleInput}
+                      className="gap-2"
+                    >
+                      Päivitä aika
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => publishVariant(i)}
+                      className="gap-2"
+                    >
+                      <CheckCheck className="h-3.5 w-3.5" />
+                      Merkitse julkaistuksi
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => cancelSchedule(i)}
+                      className="gap-2"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Peru ajastus
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+              {v.status === "published" ? (
+                <div className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                  <CheckCheck className="mr-1 inline h-3 w-3" />
+                  Julkaistu{v.scheduledAt ? ` ${formatSchedule(v.scheduledAt)}` : ""}
+                </div>
+              ) : null}
+
+              {v.saveState === "error" ? (
+                <div className="text-xs text-red-400 truncate" title={v.errorMsg}>
+                  Virhe: {v.errorMsg}
+                </div>
+              ) : null}
             </CardBody>
           </Card>
         ))

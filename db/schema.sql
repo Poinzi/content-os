@@ -95,3 +95,12 @@ CREATE INDEX IF NOT EXISTS idx_folders_org ON folders(org_id);
 CREATE INDEX IF NOT EXISTS idx_media_org ON media_assets(org_id);
 CREATE INDEX IF NOT EXISTS idx_content_org ON content_items(org_id);
 CREATE INDEX IF NOT EXISTS idx_calendar_org ON calendar_events(org_id);
+
+-- Vaihe 13: kalenteri + ajastus. Additiiviset ALTER-lauseet olemassa oleviin
+-- tauluihin. IF NOT EXISTS pitää ajot idempotentteina — käynnistys ei kaadu
+-- vaikka sarakkeet olisivat jo olemassa.
+ALTER TABLE calendar_events
+  ADD COLUMN IF NOT EXISTS content_variant_id UUID REFERENCES content_variants(id) ON DELETE SET NULL;
+ALTER TABLE calendar_events
+  ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_calendar_variant ON calendar_events(content_variant_id) WHERE content_variant_id IS NOT NULL;
