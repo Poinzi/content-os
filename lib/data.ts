@@ -367,6 +367,85 @@ export async function getAnalytics(orgId: string): Promise<AnalyticsSummary> {
 /* ========== WRITERS ========== */
 
 /**
+ * Vaihe 17: päivitä brand_brains-rivin annetut kentät (UPSERT). Dynaaminen
+ * SET vain annetuista kentistä, jsonb-kentät JSON.stringify:llä.
+ * Mock-tilassa no-op — brand-brain-form päivittää vain paikallista tilaa.
+ */
+export async function updateBrandBrain(
+  orgId: string,
+  patch: Partial<
+    Pick<
+      BrandBrain,
+      "writingStyle" | "services" | "targetAudiences" | "toneOfVoice" | "ctas" | "values"
+    >
+  >,
+): Promise<void> {
+  if (useMock()) return;
+  await ensureReady();
+
+  const sets: string[] = [];
+  const cols: string[] = ["org_id"];
+  const insertVals: string[] = ["$1::uuid"];
+  const params: unknown[] = [orgId];
+  let pIndex = 2;
+
+  const push = (col: string, val: unknown, isJsonb: boolean) => {
+    cols.push(col);
+    insertVals.push(`$${pIndex}${isJsonb ? "::jsonb" : ""}`);
+    sets.push(`${col} = EXCLUDED.${col}`);
+    params.push(val);
+    pIndex++;
+  };
+
+  if (patch.writingStyle !== undefined) {
+    push("writing_style", patch.writingStyle, false);
+  }
+  if (patch.toneOfVoice !== undefined) {
+    push("tone_of_voice", patch.toneOfVoice, false);
+  }
+  if (patch.values !== undefined) {
+    push("values", patch.values, false);
+  }
+  if (patch.services !== undefined) {
+    push("services", JSON.stringify(patch.services), true);
+  }
+  if (patch.targetAudiences !== undefined) {
+    push("target_audiences", JSON.stringify(patch.targetAudiences), true);
+  }
+  if (patch.ctas !== undefined) {
+    push("ctas", JSON.stringify(patch.ctas), true);
+  }
+
+  if (sets.length === 0) return; // ei muutettavia kenttiä
+
+  await query(
+    `INSERT INTO brand_brains (${cols.join(", ")})
+     VALUES (${insertVals.join(", ")})
+     ON CONFLICT (org_id) DO UPDATE SET ${sets.join(", ")}`,
+    params,
+  );
+}
+
+/**
+ * Vaihe 17: aktivoi/deaktivoi sisältösarja. Rajaus orgiin.
+ * Mock-tilassa no-op.
+ */
+export async function setSeriesActive(
+  orgId: string,
+  seriesId: string,
+  isActive: boolean,
+): Promise<void> {
+  if (useMock()) return;
+  await ensureReady();
+  await query(
+    `UPDATE content_series
+     SET is_active = $1
+     WHERE id = $2::uuid AND org_id = $3::uuid`,
+    [isActive, seriesId, orgId],
+  );
+}
+
+/**
  * Tallenna Vision-analyysi mediaan. Mock-tilassa tai ilman DATABASE_URL:ää
  * ei kirjoiteta mihinkään — kutsuja käsittelee palautetun analyysin
  * pelkästään näkymässä (demo-käyttö).

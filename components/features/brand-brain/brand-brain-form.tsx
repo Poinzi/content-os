@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Check, Info, X } from "lucide-react";
+import { AlertTriangle, Check, Info, X } from "lucide-react";
 import type { BrandBrain, ContentSeries } from "@/lib/types";
 import { Card, CardBody } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -10,16 +10,104 @@ interface Props {
   initial: BrandBrain;
 }
 
+type SaveState = "saved" | "dirty" | "saving" | "error";
+
+// Kentät, jotka postataan PATCH /api/brand-brain -reittiin. `allowedSeries`
+// mennee erillisen /series/[id] -reitin läpi, joten se ei kuulu tähän.
+const BRAIN_FIELDS: ReadonlyArray<
+  keyof Pick<
+    BrandBrain,
+    "writingStyle" | "toneOfVoice" | "values" | "services" | "targetAudiences" | "ctas"
+  >
+> = ["writingStyle", "toneOfVoice", "values", "services", "targetAudiences", "ctas"];
+
 export function BrandBrainForm({ initial }: Props) {
   const [data, setData] = useState<BrandBrain>(initial);
-  const [saved, setSaved] = useState(true);
+  const [saveState, setSaveState] = useState<SaveState>("saved");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Kerätyt kentät, jotka pitää postata seuraavassa flushissa.
+  const pending = useRef<Set<keyof BrandBrain>>(new Set());
+  // Uusin data ref-muodossa, jotta debounce-callback lukee tuoreen tilan.
+  const latestRef = useRef<BrandBrain>(initial);
+
+  const flushBrain = async () => {
+    const changed = Array.from(pending.current).filter((k): k is (typeof BRAIN_FIELDS)[number] =>
+      (BRAIN_FIELDS as readonly string[]).includes(k as string),
+    );
+    if (changed.length === 0) {
+      // Voi olla että vain allowedSeries oli likainen — se hoidetaan togglessa
+      // suoraan, joten voidaan merkitä tallennetuksi.
+      pending.current.clear();
+      setSaveState("saved");
+      return;
+    }
+    const body: Record<string, unknown> = {};
+    for (const k of changed) body[k] = latestRef.current[k];
+    setSaveState("saving");
+    try {
+      const res = await fetch("/api/brand-brain", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      pending.current.clear();
+      setSaveState("saved");
+    } catch (err) {
+      console.error("[BrandBrainForm] autosave epäonnistui:", err);
+      setSaveState("error");
+    }
+  };
 
   const update = <K extends keyof BrandBrain>(key: K, value: BrandBrain[K]) => {
-    setData((d) => ({ ...d, [key]: value }));
-    setSaved(false);
+    setData((d) => {
+      const next = { ...d, [key]: value };
+      latestRef.current = next;
+      return next;
+    });
+    pending.current.add(key);
+    setSaveState("dirty");
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setSaved(true), 800);
+    timer.current = setTimeout(() => {
+      void flushBrain();
+    }, 700);
+  };
+
+  const toggleSeries = async (seriesId: string) => {
+    // Optimistinen: käännä paikallisesti heti, kutsu API, rollback jos error.
+    const before = latestRef.current.allowedSeries;
+    const target = before.find((x) => x.id === seriesId);
+    if (!target) return;
+    const nextActive = !target.isActive;
+    const nextSeries = before.map((x) =>
+      x.id === seriesId ? { ...x, isActive: nextActive } : x,
+    );
+    setData((d) => {
+      const next = { ...d, allowedSeries: nextSeries };
+      latestRef.current = next;
+      return next;
+    });
+    setSaveState("saving");
+    try {
+      const res = await fetch(`/api/brand-brain/series/${encodeURIComponent(seriesId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: nextActive }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Jos brain-kenttiä on debouncessa, älä ylikirjoita "saving" → jätä ne
+      // hoitamaan flush omalla ajallaan.
+      if (pending.current.size === 0) setSaveState("saved");
+    } catch (err) {
+      console.error("[BrandBrainForm] sarjan päivitys epäonnistui:", err);
+      // Rollback
+      setData((d) => {
+        const next = { ...d, allowedSeries: before };
+        latestRef.current = next;
+        return next;
+      });
+      setSaveState("error");
+    }
   };
 
   return (
@@ -35,13 +123,20 @@ export function BrandBrainForm({ initial }: Props) {
             </p>
           </div>
           <div className="shrink-0 text-xs">
-            {saved ? (
+            {saveState === "saved" ? (
               <span className="inline-flex items-center gap-1 text-status-success">
                 <Check className="h-3.5 w-3.5" />
                 Tallennettu
               </span>
-            ) : (
+            ) : saveState === "saving" ? (
               <span className="text-text-tertiary">Tallennetaan…</span>
+            ) : saveState === "dirty" ? (
+              <span className="text-text-tertiary">Muutoksia…</span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-status-warning">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Tallennus epäonnistui
+              </span>
             )}
           </div>
         </CardBody>
@@ -115,14 +210,9 @@ export function BrandBrainForm({ initial }: Props) {
             <SeriesToggle
               key={s.id}
               series={s}
-              onToggle={() =>
-                update(
-                  "allowedSeries",
-                  data.allowedSeries.map((x) =>
-                    x.id === s.id ? { ...x, isActive: !x.isActive } : x,
-                  ),
-                )
-              }
+              onToggle={() => {
+                void toggleSeries(s.id);
+              }}
             />
           ))}
         </div>
