@@ -51,9 +51,10 @@ export function ensureReady(): Promise<void> {
     readyPromise = (async () => {
       const r = await initSchema();
       if (!r.ok) throw new Error(`initSchema failed: ${r.reason}`);
-      const { seedFromMock, seedAnalytics } = await import("./seed");
+      const { seedFromMock, seedAnalytics, seedBootstrapAdmin } = await import("./seed");
       await seedFromMock();
       await seedAnalytics();
+      await seedBootstrapAdmin();
     })().catch((e) => {
       readyPromise = null;
       throw e;

@@ -1,23 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
-import { AUTH_COOKIE, gateEnabled, passwordToToken } from "@/lib/auth-gate";
+import { NextResponse, type NextRequest } from "next/server";
+import { authEnabled, SESSION_COOKIE, verifySession } from "@/lib/auth";
 
 /**
- * Vaihe 18: salasanaportti koko sovellukselle. Jos APP_PASSWORD ei ole
- * asetettu, päästetään kaikki läpi (portti pois päältä). Muuten kaikki
- * matcherin kattamat reitit vaativat co_auth-evästeen, jonka arvo täsmää
- * SHA-256-tokeniin salasanasta.
+ * Vaihe 19: istuntopohjainen middleware.
+ * - Auth OFF (SESSION_SECRET puuttuu tai mock-tila): kaikki läpi (demo).
+ * - Auth ON: vaadi kelvollinen SESSION_COOKIE. Ilman → redirect /login?next=...
  *
- * Matcher jättää ulos /login, /api/login, /_next/*, /favicon.ico ja staattiset
- * assetit, jotta login-sivu ja sen POST-endpointti toimivat aina.
+ * Ei DB-hakuja täällä — vain HMAC-tarkistus, jotta middleware toimii edge-
+ * runtimessa. Matcher jättää ulos /login, /api/login, staattiset assetit.
  */
 export async function middleware(req: NextRequest): Promise<NextResponse> {
-  if (!gateEnabled()) return NextResponse.next();
+  if (!authEnabled()) return NextResponse.next();
 
-  const password = process.env.APP_PASSWORD!;
-  const expected = await passwordToToken(password);
-  const cookie = req.cookies.get(AUTH_COOKIE)?.value;
-
-  if (cookie === expected) return NextResponse.next();
+  const session = await verifySession(req.cookies.get(SESSION_COOKIE)?.value);
+  if (session) return NextResponse.next();
 
   const url = req.nextUrl.clone();
   const original = req.nextUrl.pathname + (req.nextUrl.search ?? "");

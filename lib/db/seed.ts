@@ -1,4 +1,5 @@
 import { pool } from "./index";
+import { hashPassword } from "@/lib/auth";
 import {
   MOCK_MEMBERSHIPS,
   MOCK_BRAND_BRAIN,
@@ -232,6 +233,68 @@ export async function seedAnalytics(): Promise<void> {
           );
         }
       }
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Vaihe 19: bootstrap-admin. Jos ADMIN_EMAIL + ADMIN_PASSWORD on asetettu ja
+ * käyttäjää ei vielä ole, luodaan users-rivi (hashattu salasana) ja liitetään
+ * aktiivi-orgiin (Savuks demossa) adminina. Idempotentti — olemassa oleva
+ * käyttäjä säilyy koskemattomana (salasanaa ei koskaan ylikirjoiteta).
+ * Kutsutaan seedFromMockin jälkeen (organisaatiot on jo olemassa).
+ */
+export async function seedBootstrapAdmin(): Promise<void> {
+  if (!pool) return;
+  const emailRaw = process.env.ADMIN_EMAIL;
+  const password = process.env.ADMIN_PASSWORD;
+  if (!emailRaw || !password) return;
+  const email = emailRaw.trim().toLowerCase();
+  if (!email) return;
+
+  const existing = await pool.query<{ id: string }>(
+    "SELECT id FROM users WHERE email = $1",
+    [email],
+  );
+  if (existing.rows.length > 0) return; // ei ylikirjoiteta
+
+  const savuksRawId = MOCK_MEMBERSHIPS[0]?.organization.id;
+  if (!savuksRawId) return;
+  const savuksUuid = ensureUuid(savuksRawId);
+  const hash = await hashPassword(password);
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const ins = await client.query<{ id: string }>(
+      `INSERT INTO users (email, password_hash, name)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (email) DO NOTHING
+       RETURNING id`,
+      [email, hash, "Admin"],
+    );
+    // Jos INSERT jäi ON CONFLICTiin (harvinainen race), hae olemassa olevan id.
+    let userId = ins.rows[0]?.id;
+    if (!userId) {
+      const row = await client.query<{ id: string }>(
+        "SELECT id FROM users WHERE email = $1",
+        [email],
+      );
+      userId = row.rows[0]?.id;
+    }
+    if (userId) {
+      await client.query(
+        `INSERT INTO organization_members (org_id, user_id, role)
+         VALUES ($1::uuid, $2, 'admin')
+         ON CONFLICT (org_id, user_id) DO NOTHING`,
+        [savuksUuid, userId],
+      );
     }
     await client.query("COMMIT");
   } catch (err) {

@@ -8,14 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 
 interface Props {
-  gateEnabled: boolean;
+  authEnabled: boolean;
 }
 
-export function LoginForm({ gateEnabled }: Props) {
+export function LoginForm({ authEnabled }: Props) {
   const router = useRouter();
   const params = useSearchParams();
   const next = params.get("next") || "/dashboard";
 
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -28,18 +29,17 @@ export function LoginForm({ gateEnabled }: Props) {
       const res = await fetch("/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ email, password }),
       });
       if (res.ok) {
         router.replace(next);
         router.refresh();
         return;
       }
-      if (res.status === 401) {
-        setError("Väärä salasana");
-      } else {
-        setError("Kirjautuminen epäonnistui");
-      }
+      const data = (await res.json().catch(() => null)) as
+        | { error?: string }
+        | null;
+      setError(data?.error ?? "Kirjautuminen epäonnistui");
     } catch {
       setError("Verkkovirhe — yritä uudelleen");
     } finally {
@@ -60,20 +60,28 @@ export function LoginForm({ gateEnabled }: Props) {
             </div>
           </div>
 
-          {gateEnabled ? (
+          {authEnabled ? (
             <>
               <div className="space-y-2">
                 <h1 className="text-2xl font-semibold tracking-display text-text-primary">
                   Kirjaudu sisään
                 </h1>
                 <p className="text-sm text-text-secondary">
-                  Syötä jaettu salasana päästäksesi sovellukseen.
+                  Syötä sähköposti ja salasana.
                 </p>
               </div>
               <form onSubmit={submit} className="space-y-3">
                 <input
-                  type="password"
+                  type="email"
                   autoFocus
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="sähköposti@example.com"
+                  className="w-full rounded-md border border-border-subtle bg-bg-base px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary transition-colors focus:border-border-strong focus:outline-none"
+                />
+                <input
+                  type="password"
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -87,7 +95,7 @@ export function LoginForm({ gateEnabled }: Props) {
                   type="submit"
                   className="w-full"
                   size="lg"
-                  disabled={busy || password.length === 0}
+                  disabled={busy || email.length === 0 || password.length === 0}
                 >
                   {busy ? "Kirjaudutaan…" : "Kirjaudu"}
                 </Button>
@@ -97,10 +105,10 @@ export function LoginForm({ gateEnabled }: Props) {
             <>
               <div className="space-y-2">
                 <h1 className="text-2xl font-semibold tracking-display text-text-primary">
-                  Kirjaudu sisään
+                  Demo-tila
                 </h1>
                 <p className="text-sm text-text-secondary">
-                  Portti on pois päältä — jatka suoraan demona.
+                  Kirjautuminen ei ole vielä konfiguroitu — jatka demona.
                 </p>
               </div>
               <Link href={next} className="block">

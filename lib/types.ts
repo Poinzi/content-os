@@ -22,6 +22,20 @@ export interface Membership {
   role: OrgRole;
 }
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string | null;
+  role: OrgRole;
+}
+
+export interface UserRecord {
+  id: string;
+  email: string;
+  passwordHash: string;
+  name: string | null;
+}
+
 export interface Folder {
   id: string;
   name: string;

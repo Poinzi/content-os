@@ -14,6 +14,7 @@ import type {
   Membership,
   Organization,
   OrgRole,
+  UserRecord,
 } from "@/lib/types";
 import { isEnabled as dbEnabled, query, ensureReady, pool } from "@/lib/db";
 import { DEMO_USER_ID } from "@/lib/db/seed";
@@ -180,6 +181,71 @@ export async function getMemberships(userId: string = DEMO_USER_ID): Promise<Mem
 export async function getActiveOrg(orgId: string): Promise<Organization | null> {
   const list = await getMemberships();
   return list.find((m) => m.organization.id === orgId)?.organization ?? list[0]?.organization ?? null;
+}
+
+/**
+ * Vaihe 19: hae organisaatio suoraan ID:llä (ei kierrätystä memberships-listan
+ * kautta). Käytetään istuntopohjaisessa tenant-kontekstissa jotta admin voi
+ * mennä orgiin ilman että "kaikki organisaatiot" listataan.
+ */
+export async function getOrganizationById(orgId: string): Promise<Organization | null> {
+  if (useMock()) {
+    return MOCK_MEMBERSHIPS.find((m) => m.organization.id === orgId)?.organization ?? null;
+  }
+  await ensureReady();
+  const { rows } = await query<OrgRow>(
+    `SELECT id, name, slug, logo_url FROM organizations WHERE id = $1::uuid LIMIT 1`,
+    [orgId],
+  );
+  return rows[0] ? mapOrg(rows[0]) : null;
+}
+
+/**
+ * Vaihe 19: hae käyttäjä sähköpostilla kirjautumista varten. Palauttaa null
+ * jos ei löydy tai mock-tilassa (mock ei tue kirjautumista).
+ */
+export async function getUserByEmail(email: string): Promise<UserRecord | null> {
+  if (useMock()) return null;
+  await ensureReady();
+  const { rows } = await query<{
+    id: string;
+    email: string;
+    password_hash: string;
+    name: string | null;
+  }>(
+    `SELECT id, email, password_hash, name FROM users WHERE email = lower($1) LIMIT 1`,
+    [email],
+  );
+  const r = rows[0];
+  if (!r) return null;
+  return { id: r.id, email: r.email, passwordHash: r.password_hash, name: r.name };
+}
+
+/**
+ * Vaihe 19: hae kirjautuneen käyttäjän kaikki jäsenyydet. Mock-tilassa palautetaan
+ * MOCK_MEMBERSHIPS (demo-käyttäjän oikeus kaikkiin).
+ */
+export async function getMembershipsForUser(userId: string): Promise<Membership[]> {
+  if (useMock()) return MOCK_MEMBERSHIPS;
+  await ensureReady();
+  const { rows } = await query<OrgRow & { role: OrgRole }>(
+    `SELECT o.id, o.name, o.slug, o.logo_url, m.role
+     FROM organizations o
+     JOIN organization_members m ON m.org_id = o.id
+     WHERE m.user_id = $1
+     ORDER BY
+       CASE m.role
+         WHEN 'owner'    THEN 1
+         WHEN 'admin'    THEN 2
+         WHEN 'editor'   THEN 3
+         WHEN 'reviewer' THEN 4
+         WHEN 'viewer'   THEN 5
+         ELSE 6
+       END,
+       o.name`,
+    [userId],
+  );
+  return rows.map((r) => ({ organization: mapOrg(r), role: r.role }));
 }
 
 export async function getMedia(orgId: string): Promise<MediaAsset[]> {

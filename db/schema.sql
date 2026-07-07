@@ -126,3 +126,18 @@ CREATE INDEX IF NOT EXISTS idx_analytics_org_date ON analytics_metrics(org_id, m
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_analytics_variant_date
   ON analytics_metrics(content_variant_id, metric_date)
   WHERE content_variant_id IS NOT NULL;
+
+-- Vaihe 19: käyttäjät + istunto. users-taulu on uusi; organization_members.user_id
+-- ja .role olivat jo olemassa (TEXT), joten ALTER-lauseet ovat käytännössä no-op
+-- IF NOT EXISTSin ansiosta. user_id säilyy TEXTinä; users.id on UUID ja tallennetaan
+-- TEXTinä organization_members-tauluun. Ei destruktiivista.
+CREATE TABLE IF NOT EXISTS users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE organization_members ADD COLUMN IF NOT EXISTS user_id TEXT;
+ALTER TABLE organization_members ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'editor';
+CREATE INDEX IF NOT EXISTS idx_org_members_user ON organization_members(user_id);
